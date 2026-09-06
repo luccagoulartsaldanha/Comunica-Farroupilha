@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 test("comment likes toggle independently for each user", async () => {
@@ -28,9 +29,10 @@ test("comment likes toggle independently for each user", async () => {
     })!;
   }
   const initialLikes = comment.likes ?? 0;
-  const liked = toggleCommentLike(comment.id, "comment-like-test-user");
+  const testUserId = randomUUID();
+  const liked = toggleCommentLike(comment.id, testUserId);
   assert.deepEqual(liked, { liked: true, likes: initialLikes + 1 });
 
-  const unliked = toggleCommentLike(comment.id, "comment-like-test-user");
+  const unliked = toggleCommentLike(comment.id, testUserId);
   assert.deepEqual(unliked, { liked: false, likes: initialLikes });
 });

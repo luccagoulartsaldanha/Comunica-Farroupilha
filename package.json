@@ -9,7 +9,7 @@
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test": "node --conditions=react-server --experimental-strip-types --test tests/*.test.ts",
     "db:migrate": "node scripts/migrate.mjs"
   },
   "engines": {
