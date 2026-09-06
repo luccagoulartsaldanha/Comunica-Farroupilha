@@ -1,27 +1,40 @@
-import { createAccount, findAccount, publicUser } from "@/lib/platform-store";
+import { createAccount, findAccountCredentials } from "@/lib/auth-repository";
+import { hashPassword, verifyPassword } from "@/lib/password";
 import { startSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   let body: { name?: unknown; turma?: unknown; password?: unknown };
-  try { body = await request.json(); } catch { return Response.json({ error: "Envie um JSON válido." }, { status: 400 }); }
-  if (typeof body.name !== "string" || typeof body.turma !== "string" || typeof body.password !== "string") return Response.json({ error: "Nome, turma e senha são obrigatórios." }, { status: 400 });
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Envie um JSON válido." }, { status: 400 });
+  }
+  if (typeof body.name !== "string" || typeof body.turma !== "string" || typeof body.password !== "string") {
+    return Response.json({ error: "Nome, turma e senha são obrigatórios." }, { status: 400 });
+  }
   const name = body.name.trim();
   const turma = body.turma.trim();
-  const password = body.password;
+  if (name.length < 3 || name.length > 160 || turma.length < 1 || turma.length > 160 || body.password.length < 8 || body.password.length > 256) {
+    return Response.json({ error: "Confira o nome, a turma e use uma senha de pelo menos 8 caracteres." }, { status: 400 });
+  }
 
-  const existing = findAccount(name, password);
+  const existing = await findAccountCredentials(name);
   if (existing) {
-    await startSession(existing);
-    return Response.json({ user: publicUser(existing) }, { status: 200 });
+    if (!(await verifyPassword(body.password, existing.passwordHash))) {
+      return Response.json({ error: "Esse nome de usuário já está em uso." }, { status: 409 });
+    }
+    await startSession(existing.user);
+    return Response.json({ user: existing.user });
   }
 
   try {
-    const account = createAccount(name, turma, password);
+    const account = await createAccount({ name, turma, role: "student", passwordHash: await hashPassword(body.password) });
     await startSession(account);
-    return Response.json({ user: publicUser(account) }, { status: 201 });
+    return Response.json({ user: account }, { status: 201 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Não foi possível criar a conta." }, { status: 400 });
+    const duplicate = typeof error === "object" && error !== null && "code" in error && error.code === "23505";
+    return Response.json({ error: duplicate ? "Esse nome de usuário já está em uso." : "Não foi possível criar a conta." }, { status: duplicate ? 409 : 503 });
   }
 }

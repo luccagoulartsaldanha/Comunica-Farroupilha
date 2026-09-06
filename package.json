@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --conditions=react-server --experimental-strip-types --test tests/*.test.ts",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:seed-admin": "node --conditions=react-server --experimental-strip-types scripts/seed-admin.ts"
   },
   "engines": {
     "node": ">=22.0.0"
