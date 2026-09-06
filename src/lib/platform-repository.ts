@@ -312,12 +312,50 @@ export async function updateProposalGefResponse(proposalId: string, gefResponse:
   return updated ? getProposal(proposalId) : null;
 }
 
-async function getActivity(activityId: string) {
+export async function getActivity(activityId: string) {
   const rows = await query<ActivityRow>(
     "SELECT id, proposal_id, title, activity_date, time_label, place, audience, status FROM activities WHERE id = $1",
     [activityId],
   );
   return rows[0] ? mapActivity(rows[0]) : null;
+}
+
+export async function getActivities() {
+  const rows = await query<ActivityRow>(
+    "SELECT id, proposal_id, title, activity_date, time_label, place, audience, status FROM activities ORDER BY activity_date",
+  );
+  return rows.map(mapActivity);
+}
+
+export async function getComments(proposalId: string) {
+  const rows = await query<CommentRow>(
+    `SELECT c.*, (SELECT count(*)::int FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes
+     FROM comments c WHERE c.proposal_id = $1 ORDER BY c.created_at`,
+    [proposalId],
+  );
+  return rows.map(mapComment);
+}
+
+export async function getComment(commentId: string) {
+  const rows = await query<CommentRow>(
+    `SELECT c.*, (SELECT count(*)::int FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes
+     FROM comments c WHERE c.id = $1`,
+    [commentId],
+  );
+  return rows[0] ? mapComment(rows[0]) : null;
+}
+
+export async function getNotifications(userId: string) {
+  const rows = await query<NotificationRow>(
+    `SELECT n.id, n.title, n.body, n.activity_id, n.created_at,
+       EXISTS (SELECT 1 FROM notification_reads nr WHERE nr.notification_id = n.id AND nr.user_id = $1) AS read
+     FROM notifications n ORDER BY n.created_at DESC`,
+    [userId],
+  );
+  return rows.map((row) => ({
+    id: row.id, title: row.title, body: row.body, createdAt: timeLabel(row.created_at) ?? "", read: row.read,
+    ...(row.activity_id ? { activityId: row.activity_id } : {}),
+  }));
 }
 
 export async function createActivity(input: {
