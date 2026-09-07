@@ -1,36 +1,28 @@
-import { getPlatformStore, updateActivityStatus } from "@/lib/platform-store";
+import { dataResponse, errorResponse, readJsonObject, unavailableResponse } from "@/lib/http";
+import { getActivity, updateActivityStatus } from "@/lib/platform-repository";
+import type { ActivityStatus } from "@/lib/platform-types";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
+const statuses: ActivityStatus[] = ["upcoming", "done", "cancelled"];
 
 export async function GET(_request: Request, context: RouteContext) {
-  const { id } = await context.params;
-  const activity = getPlatformStore().activities.find((item) => item.id === id);
-  if (!activity) return Response.json({ error: "Atividade não encontrada." }, { status: 404 });
-  return Response.json({ data: activity });
+  try {
+    const activity = await getActivity((await context.params).id);
+    return activity ? dataResponse(activity) : errorResponse("Atividade não encontrada.", 404);
+  } catch (error) { return unavailableResponse("get-activity", error); }
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const user = await getSessionUser();
-  if (!user) return Response.json({ error: "Faça login para gerenciar atividades." }, { status: 401 });
-  if (user.role !== "gef") return Response.json({ error: "Somente o GEF pode alterar o status de atividades." }, { status: 403 });
-
-  const { id } = await context.params;
-  let body: { status?: unknown };
   try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Envie um JSON válido." }, { status: 400 });
-  }
-
-  const allowed = ["upcoming", "done", "cancelled"];
-  if (typeof body.status !== "string" || !allowed.includes(body.status)) {
-    return Response.json({ error: "Status inválido. Use 'upcoming', 'done' ou 'cancelled'." }, { status: 400 });
-  }
-
-  const activity = updateActivityStatus(id, body.status as "upcoming" | "done" | "cancelled");
-  if (!activity) return Response.json({ error: "Atividade não encontrada." }, { status: 404 });
-
-  return Response.json({ data: activity });
+    const user = await getSessionUser();
+    if (!user) return errorResponse("Faça login para gerenciar atividades.", 401);
+    if (user.role !== "gef") return errorResponse("Somente o GEF pode alterar o status de atividades.", 403);
+    const body = await readJsonObject(request);
+    if (!body) return errorResponse("Envie um JSON válido.", 400);
+    if (typeof body.status !== "string" || !statuses.includes(body.status as ActivityStatus)) return errorResponse("Status inválido.", 400);
+    const activity = await updateActivityStatus((await context.params).id, body.status as ActivityStatus);
+    return activity ? dataResponse(activity) : errorResponse("Atividade não encontrada.", 404);
+  } catch (error) { return unavailableResponse("update-activity", error); }
 }

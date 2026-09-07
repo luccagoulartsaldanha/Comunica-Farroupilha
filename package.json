@@ -2,13 +2,16 @@
   "name": "gremio-comunica-farroupilha",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test tests/platform-store.test.ts"
+    "test": "node --conditions=react-server --experimental-strip-types --test tests/*.test.ts",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:seed-admin": "node --conditions=react-server --experimental-strip-types scripts/seed-admin.ts"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -17,9 +20,11 @@
   "dependencies": {
     "@fontsource-variable/archivo": "^5.3.0",
     "@fontsource-variable/manrope": "^5.3.0",
+    "@neondatabase/serverless": "^1.1.0",
     "next": "^16.3.4",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

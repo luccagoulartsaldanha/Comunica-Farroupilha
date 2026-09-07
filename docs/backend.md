@@ -1,27 +1,69 @@
 # Backend do Comunica Farroupilha
 
-## O que já está implementado
+## Persistência
 
-O App Router expõe Route Handlers em `src/app/api` para o fluxo demonstrável:
+O backend usa Neon Postgres como fonte única e compartilhada entre as instâncias serverless da Vercel. Não há store global, arquivos em `/tmp` ou fallback de dados de domínio no `localStorage`.
 
-- `GET /api/health` — verifica se o serviço responde.
-- `POST /api/auth/login`, `POST /api/auth/signup` e `POST /api/auth/logout` — sessão por cookie HttpOnly para a demo.
-- `GET/POST /api/proposals` — feed e criação de propostas por estudantes.
-- `GET/PATCH /api/proposals/:id` — leitura (inclui apoiadores) e atualização de situação pelo GEF.
-- `GET/POST /api/proposals/:id/comments` — comentários e respostas.
-- `POST /api/proposals/:id/support` — alterna o apoio da pessoa autenticada.
-- `POST /api/proposals/:id/save` — alterna o acompanhamento da proposta pela pessoa autenticada.
-- `GET/POST /api/activities` — agenda e publicação de atividades pelo GEF.
-- `GET/PATCH /api/notifications` — leitura e marcação de notificações.
-- `GET /api/chapas?area=...` — catálogo informativo das propostas da Chapa 1 e da Chapa 2 por área, sem ordem de preferência.
-- `GET /api/platform` — snapshot usado para inspeção da demo.
+As tabelas e restrições ficam em `db/migrations/0001_initial.sql` e migrations seguintes. Contagens de apoios, comentários e avaliações são derivadas das relações. As chaves únicas de apoio, acompanhamento, curtida e avaliação tornam requisições repetidas idempotentes. `0002_interaction_revisions.sql` registra a revisão mais recente por ação para rejeitar requisições atrasadas.
 
-As validações de permissão já estão no servidor: estudante publica proposta e comenta; somente o GEF altera situação e cria atividade. Apoios são registrados por pessoa, comentários geram notificações e uma atividade publicada gera um aviso para a comunidade. O piloto está desenhado para todo o Ensino Fundamental e Médio. A interface continua com fallback local para a apresentação, e sincroniza as ações com esses endpoints quando o serviço está disponível.
+Variáveis obrigatórias, sempre fora do Git:
 
-## Limite consciente da demo
+- `DATABASE_URL`: conexão usada pela aplicação;
+- `DATABASE_URL_UNPOOLED`: conexão preferida pelo migrador;
+- `ADMIN_USERNAME`, `ADMIN_PASSWORD` e `ADMIN_CLASS`: seed controlado da conta GEF.
 
-O armazenamento atual é em memória (`src/lib/platform-store.ts`) e a sessão também é temporária. Isso torna a demonstração simples e executável sem credenciais, mas não é persistência de produção: reinícios de processo podem apagar os dados e múltiplas instâncias não compartilham o mesmo estado.
+## Autenticação
 
-Antes do uso real, substituir o store por um banco gerenciado (por exemplo, Postgres), armazenar senhas com hash forte, validar o domínio escolar, configurar expiração e rotação de sessão, adicionar rate limiting e registrar auditoria de ações do GEF. A conexão com Google Workspace deve ser feita por OAuth/OIDC depois que o colégio fornecer as configurações e consentimentos necessários; quando autorizada, ela poderá criar ou vincular automaticamente o perfil escolar.
+Contas são persistidas no banco. A senha é armazenada somente como hash `scrypt` versionado, com salt aleatório. A sessão usa um token aleatório de 32 bytes no cookie `HttpOnly`; o banco recebe somente o SHA-256 desse token e sua expiração.
 
-Nenhuma chave, senha real ou credencial escolar fica no repositório. As credenciais `administrador` / `admteste123` são apenas da demo solicitada.
+O cookie usa `SameSite=Lax`, caminho `/`, duração de sete dias e `Secure` em produção. Logout revoga a sessão no banco. Nenhum endpoint público devolve hashes, tokens ou a lista de contas.
+
+## Endpoints
+
+- `GET /api/health`: confirma processo e conexão com o banco; falha com 503 quando o Neon está indisponível.
+- `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/me`, `POST /api/auth/logout`.
+- `GET/POST /api/proposals`.
+- `GET/PATCH /api/proposals/:id`.
+- `GET/POST /api/proposals/:id/comments`.
+- `POST /api/proposals/:id/support`: exige `{ "supported": boolean }`.
+- `POST /api/proposals/:id/save`: exige `{ "saved": boolean }`.
+- `POST /api/comments/:id/like`: exige `{ "liked": boolean }`.
+- `GET/POST /api/activities` e `GET/PATCH /api/activities/:id`.
+- `GET/POST /api/activities/:id/feedback`.
+- `GET/PATCH /api/notifications`.
+- `GET /api/chapas` e `GET/POST/PATCH /api/chapas/questions`: retornam 410 até uma eleição ser configurada; a flag está em `src/lib/feature-flags.ts`.
+- `GET /api/platform`: snapshot público e específico da sessão.
+- `POST /api/admin/legacy-import`: importação GEF idempotente de dados antigos do navegador.
+
+Respostas de domínio usam `{ data }`; falhas usam `{ error }` com status 400, 401, 403, 404, 409, 410 ou 503. Dados dinâmicos usam `Cache-Control: no-store, max-age=0` e respostas específicas da sessão variam por cookie.
+
+## Concorrência e cliente
+
+Apoio, acompanhamento e curtida recebem a intenção final, não um comando de alternância. O cliente aplica feedback otimista imediatamente, numera cada interação e ignora respostas antigas. A resposta canônica do banco consolida o estado; a falha da revisão atual faz rollback e exibe uma mensagem.
+
+Na inicialização, sessão e snapshot são carregados em conjunto. Uma resposta 503 gera uma tela de erro com nova tentativa; somente um snapshot bem-sucedido e realmente vazio exibe “nenhuma proposta”.
+
+## Timestamps e notificações
+
+O banco armazena todos os instantes em `timestamptz`. A API converte-os para rótulos relativos em um único ponto (`Agora`, `Há N min`, `Há N h` ou data local). O card usa a mesma criação no cabeçalho e na linha de autoria; atualizações não aparecem como se fossem a criação.
+
+`notification-manager.ts` atribui uma chave estável por evento, usa upsert para retries e compacta registros legados com o mesmo título e corpo. O agrupamento mantém o horário mais recente, soma `occurrences` e permanece não lido se qualquer ocorrência ainda estiver não lida.
+
+## Migração do legado
+
+Quando um navegador ainda contém `comunica-farroupilha-demo` ou `gremio-comunica-demo`, a visão do GEF mostra uma prévia. A importação só ocorre após clique explícito.
+
+O cliente e o servidor aplicam limites e descartam contas, senhas, sessões e mapas por usuário. O servidor usa uma chave SHA-256 e IDs determinísticos dentro de uma transação, de modo que o mesmo payload não cria duplicatas. A cópia antiga só é apagada após sucesso e confirmação do operador.
+
+## Operação
+
+```sh
+pnpm db:migrate
+pnpm db:seed-admin
+pnpm test
+pnpm lint
+pnpm typecheck
+pnpm build
+```
+
+As migrações desta entrega são aditivas. Antes de mudanças destrutivas futuras, criar backup no Neon e uma migration reversível. Rate limiting distribuído e verificação de vínculo escolar continuam sendo requisitos antes de abertura ampla para toda a comunidade.

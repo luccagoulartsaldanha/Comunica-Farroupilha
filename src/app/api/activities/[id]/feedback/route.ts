@@ -1,65 +1,39 @@
-import {
-  getActivityFeedbacks,
-  getPlatformStore,
-  submitActivityFeedback,
-  type ActivityFeedbackRating,
-} from "@/lib/platform-store";
+import { dataResponse, errorResponse, readJsonObject, requiredString, unavailableResponse } from "@/lib/http";
+import { getActivity, getActivityFeedbacks, getPlatformSnapshot, submitActivityFeedback } from "@/lib/platform-repository";
+import type { ActivityFeedbackRating } from "@/lib/platform-types";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
+const ratings: ActivityFeedbackRating[] = ["great", "good", "ok", "poor"];
 
 export async function GET(_request: Request, context: RouteContext) {
-  const { id } = await context.params;
-  const activity = getPlatformStore().activities.find((item) => item.id === id);
-  if (!activity) return Response.json({ error: "Atividade não encontrada." }, { status: 404 });
-  const feedbacks = getActivityFeedbacks(id);
-  return Response.json({ data: feedbacks });
+  try {
+    const user = await getSessionUser();
+    if (!user) return errorResponse("Faça login para consultar avaliações.", 401);
+    const { id } = await context.params;
+    if (!(await getActivity(id))) return errorResponse("Atividade não encontrada.", 404);
+    if (user.role === "gef") return dataResponse(await getActivityFeedbacks(id));
+    return dataResponse((await getPlatformSnapshot(user.id)).activityFeedbacks[id] ?? []);
+  } catch (error) { return unavailableResponse("list-feedback", error); }
 }
 
 export async function POST(request: Request, context: RouteContext) {
-  const user = await getSessionUser();
-  if (!user) return Response.json({ error: "Faça login para avaliar uma atividade." }, { status: 401 });
-
-  const { id } = await context.params;
-  const activity = getPlatformStore().activities.find((item) => item.id === id);
-  if (!activity) return Response.json({ error: "Atividade não encontrada." }, { status: 404 });
-
-  let body: {
-    participated?: unknown;
-    reasonNotParticipated?: unknown;
-    rating?: unknown;
-    comment?: unknown;
-  };
-
   try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Envie um JSON válido." }, { status: 400 });
-  }
-
-  if (typeof body.participated !== "boolean") {
-    return Response.json({ error: "Informe se você participou da atividade (true ou false)." }, { status: 400 });
-  }
-
-  const validRatings: ActivityFeedbackRating[] = ["great", "good", "ok", "poor"];
-  let rating: ActivityFeedbackRating | undefined = undefined;
-  if (body.rating && typeof body.rating === "string" && validRatings.includes(body.rating as ActivityFeedbackRating)) {
-    rating = body.rating as ActivityFeedbackRating;
-  }
-
-  const reasonNotParticipated = typeof body.reasonNotParticipated === "string" ? body.reasonNotParticipated.trim() : undefined;
-  const comment = typeof body.comment === "string" ? body.comment.trim() : undefined;
-
-  const record = submitActivityFeedback(id, {
-    userId: user.id,
-    userName: user.name,
-    turma: user.turma,
-    participated: body.participated,
-    reasonNotParticipated,
-    rating,
-    comment,
-  });
-
-  return Response.json({ data: record }, { status: 201 });
+    const user = await getSessionUser();
+    if (!user) return errorResponse("Faça login para avaliar uma atividade.", 401);
+    const body = await readJsonObject(request);
+    if (!body) return errorResponse("Envie um JSON válido.", 400);
+    if (typeof body.participated !== "boolean") return errorResponse("Informe se você participou da atividade.", 400);
+    const reason = body.reasonNotParticipated === undefined ? undefined : requiredString(body.reasonNotParticipated, { max: 500 });
+    const comment = body.comment === undefined ? undefined : requiredString(body.comment, { max: 2000 });
+    const rating = typeof body.rating === "string" && ratings.includes(body.rating as ActivityFeedbackRating) ? body.rating as ActivityFeedbackRating : undefined;
+    if ((body.reasonNotParticipated !== undefined && !reason) || (body.comment !== undefined && !comment) || (body.rating !== undefined && !rating)) return errorResponse("Avaliação inválida.", 400);
+    const { id } = await context.params;
+    if (!(await getActivity(id))) return errorResponse("Atividade não encontrada.", 404);
+    return dataResponse(await submitActivityFeedback(id, {
+      userId: user.id, participated: body.participated,
+      ...(reason ? { reasonNotParticipated: reason } : {}), ...(rating ? { rating } : {}), ...(comment ? { comment } : {}),
+    }), { status: 201 });
+  } catch (error) { return unavailableResponse("submit-feedback", error); }
 }

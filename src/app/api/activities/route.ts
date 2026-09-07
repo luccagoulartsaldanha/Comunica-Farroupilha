@@ -1,20 +1,32 @@
-import { createActivity, getPlatformStore } from "@/lib/platform-store";
+import { dataResponse, errorResponse, readJsonObject, requiredString, unavailableResponse } from "@/lib/http";
+import { createActivity, getActivities } from "@/lib/platform-repository";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return Response.json({ data: getPlatformStore().activities });
+  try { return dataResponse(await getActivities()); }
+  catch (error) { return unavailableResponse("list-activities", error); }
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return Response.json({ error: "Faça login para criar uma atividade." }, { status: 401 });
-  if (user.role !== "gef") return Response.json({ error: "Somente o GEF pode criar atividades." }, { status: 403 });
-  let body: { proposalId?: unknown; title?: unknown; date?: unknown; time?: unknown; place?: unknown; audience?: unknown };
-  try { body = await request.json(); } catch { return Response.json({ error: "Envie um JSON válido." }, { status: 400 }); }
-  if (![body.proposalId, body.title, body.date, body.time, body.place, body.audience].every((value) => typeof value === "string" && value.trim())) return Response.json({ error: "Proposta, título, data, horário, local e público são obrigatórios." }, { status: 400 });
-  const activity = createActivity({ proposalId: body.proposalId as string, title: body.title as string, date: body.date as string, time: body.time as string, place: body.place as string, audience: body.audience as string });
-  if (!activity) return Response.json({ error: "Proposta não encontrada." }, { status: 404 });
-  return Response.json({ data: activity }, { status: 201 });
+  try {
+    const user = await getSessionUser();
+    if (!user) return errorResponse("Faça login para criar uma atividade.", 401);
+    if (user.role !== "gef") return errorResponse("Somente o GEF pode criar atividades.", 403);
+    const body = await readJsonObject(request);
+    if (!body) return errorResponse("Envie um JSON válido.", 400);
+    const proposalId = requiredString(body.proposalId, { max: 64 });
+    const title = requiredString(body.title, { max: 160 });
+    const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
+    const time = requiredString(body.time, { max: 80 });
+    const place = requiredString(body.place, { max: 160 });
+    const audience = requiredString(body.audience, { max: 160 });
+    if (!proposalId || !title || !date || !time || !place || !audience) return errorResponse("Proposta, título, data, horário, local e público são obrigatórios.", 400);
+    const activity = await createActivity({ proposalId, title, date, time, place, audience });
+    if (!activity) return errorResponse("Proposta não encontrada.", 404);
+    return dataResponse(activity, { status: 201 });
+  } catch (error) {
+    return unavailableResponse("create-activity", error);
+  }
 }

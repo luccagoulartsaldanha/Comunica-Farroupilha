@@ -1,27 +1,14 @@
-import { getPlatformStore } from "@/lib/platform-store";
+import { dataResponse, unavailableResponse } from "@/lib/http";
+import { getPlatformSnapshot } from "@/lib/platform-repository";
+import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const store = getPlatformStore();
-  return Response.json({
-    data: {
-      proposals: store.proposals,
-      comments: store.comments,
-      activities: store.activities,
-      notifications: store.notifications,
-      supportersByProposal: store.supportersByProposal,
-      supportedByUser: store.supportedByUser,
-      savedByUser: store.savedByUser,
-      likedCommentsByUser: store.likedCommentsByUser,
-      chapas: store.chapas,
-      activityFeedbacks: store.activityFeedbacks,
-      chapaQuestions: store.chapaQuestions,
-    },
-    meta: {
-      mode: "demo",
-      persistence: "persistent-file",
-      message: "Plataforma integrada com persistência estruturada e backend REST.",
-    },
-  });
+  try {
+    const user = await getSessionUser();
+    return dataResponse(await getPlatformSnapshot(user?.id));
+  } catch (error) {
+    return unavailableResponse("platform-snapshot", error);
+  }
 }

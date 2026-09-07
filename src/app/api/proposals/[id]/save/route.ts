@@ -1,19 +1,22 @@
-import { getPlatformStore, setSaved, toggleSaved } from "@/lib/platform-store";
+import { dataResponse, errorResponse, readJsonObject, unavailableResponse } from "@/lib/http";
+import { getProposal, setSaved } from "@/lib/platform-repository";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
-  const user = await getSessionUser();
-  if (!user) return Response.json({ error: "Faça login para acompanhar uma proposta." }, { status: 401 });
-  const { id } = await context.params;
-  if (!getPlatformStore().proposals.some((proposal) => proposal.id === id)) return Response.json({ error: "Proposta não encontrada." }, { status: 404 });
-  let desiredSaved: boolean | undefined;
   try {
-    const body = await request.json() as { saved?: unknown };
-    if (typeof body.saved === "boolean") desiredSaved = body.saved;
-  } catch {}
-  const result = desiredSaved === undefined ? toggleSaved(id, user.id) : setSaved(id, user.id, desiredSaved);
-  return Response.json({ data: result }, { status: 200 });
+    const user = await getSessionUser();
+    if (!user) return errorResponse("Faça login para acompanhar uma proposta.", 401);
+    const body = await readJsonObject(request);
+    if (!body) return errorResponse("Envie um JSON válido.", 400);
+    if (typeof body.saved !== "boolean") return errorResponse("Informe a intenção de acompanhamento.", 400);
+    if (typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 0) return errorResponse("Informe uma revisão de interação válida.", 400);
+    const { id } = await context.params;
+    if (!(await getProposal(id))) return errorResponse("Proposta não encontrada.", 404);
+    return dataResponse(await setSaved(id, user.id, body.saved, body.revision));
+  } catch (error) {
+    return unavailableResponse("set-save", error);
+  }
 }

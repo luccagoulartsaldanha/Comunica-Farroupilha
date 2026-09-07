@@ -1,8 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SelectMenu } from "@/components/select-menu";
+import {
+  applyCommentLikeState,
+  applySavedState,
+  applySupportState,
+  beginInteraction,
+  isLatestInteraction,
+  loadPlatform,
+  parseUiPreferences,
+  serializeUiPreferences,
+  type LoadStatus,
+} from "@/lib/client-platform-state";
+import { previewLegacyState, sanitizeLegacyImport } from "@/lib/legacy-import";
+import { ELECTIONS_ENABLED } from "@/lib/feature-flags";
 
 type Role = "student" | "gef";
 type View = "proposals" | "saved" | "agenda" | "chapas" | "notifications" | "gef";
@@ -14,8 +27,6 @@ type User = {
   turma: string;
   role: Role;
 };
-
-type Account = User & { password: string };
 
 type Proposal = {
   id: string;
@@ -87,6 +98,7 @@ type Notification = {
   createdAt: string;
   read: boolean;
   activityId?: string;
+  occurrences?: number;
 };
 
 type ChapaProposal = { area: string; title: string; detail: string };
@@ -109,7 +121,6 @@ type ChapaQuestion = {
 
 type DemoState = {
   user: User | null;
-  accounts: Account[];
   proposals: Proposal[];
   comments: ProposalComment[];
   activities: Activity[];
@@ -195,7 +206,7 @@ function ProfileMenu({ onLogout, onReset }: { onLogout: () => void; onReset: () 
   return (
     <div className="profile-menu">
       <button type="button" onClick={onLogout}><Icon name="logout" size={16} />Sair</button>
-      <button type="button" onClick={onReset}><Icon name="refresh" size={16} />Restaurar dados</button>
+      <button type="button" onClick={onReset}><Icon name="refresh" size={16} />Recarregar dados</button>
     </div>
   );
 }
@@ -228,9 +239,6 @@ function ProgressSteps({ status }: { status: ProposalStatus }) {
 }
 const defaultState: DemoState = {
   user: null,
-  accounts: [
-    { id: "admin", name: "administrador", turma: "GEF", role: "gef", password: "admteste123" },
-  ],
   proposals: [],
   comments: [],
   activities: [],
@@ -472,7 +480,7 @@ function ProposalCard({
             <Avatar name={proposal.origin === "gef" ? "GEF" : proposal.anonymous ? "EA" : proposal.author} role={proposal.origin === "gef" ? "gef" : undefined} small />
             <span>
               <strong>{authorLabel(proposal)}</strong>
-              <small>{proposal.anonymous ? "Autoria preservada" : `${proposal.updatedAt} · ${proposal.theme}`}</small>
+              <small>{proposal.anonymous ? `Autoria preservada · Criada ${proposal.createdAt}` : `Criada ${proposal.createdAt} · ${proposal.theme}`}</small>
             </span>
           </span>
           <span className="support-count"><Icon name="users" size={19} /><span><strong>{proposal.supports}</strong><small>Apoios</small></span></span>
@@ -606,41 +614,9 @@ function CommentThread({
   );
 }
 
-function SupportersPanel({ supporters = [], total }: { supporters?: Supporter[]; total: number }) {
-  const visible = supporters.slice(0, 4);
-  const remaining = Math.max(0, total - visible.length);
-  return (
-    <aside className="supporters-card" aria-label="Pessoas que apoiaram esta proposta">
-      <div className="supporters-head">
-        <span className="how-icon"><Icon name="users" size={19} /></span>
-        <div>
-          <h3>Quem apoiou</h3>
-          <p>{total} {total === 1 ? "apoio" : "apoios"} da comunidade</p>
-        </div>
-      </div>
-      <ul className="supporter-list">
-        {visible.map((supporter) => (
-          <li key={supporter.id}>
-            <Avatar name={supporter.name} small />
-            <span><strong>{supporter.name}</strong><small>{supporter.turma}</small></span>
-          </li>
-        ))}
-        {remaining > 0 && (
-          <li className="supporter-more">
-            <span className="supporter-more-count">+{remaining}</span>
-            <span><strong>Outras pessoas</strong><small>apoios registrados</small></span>
-          </li>
-        )}
-        {visible.length === 0 && <li className="supporters-empty">Seja a primeira pessoa a apoiar.</li>}
-      </ul>
-    </aside>
-  );
-}
-
 function ProposalDetail({
   proposal,
   comments,
-  supporters,
   user,
   onComment,
   onLike,
@@ -650,7 +626,6 @@ function ProposalDetail({
 }: {
   proposal: Proposal;
   comments: ProposalComment[];
-  supporters: Supporter[];
   user: User;
   isGef: boolean;
   onComment: (body: string, anonymous: boolean, parentId?: string) => void;
@@ -673,9 +648,8 @@ function ProposalDetail({
   return (
     <div className="detail-grid" id={`proposal-detail-${proposal.id}`}>
       <CommentThread comments={comments} proposalId={proposal.id} user={user} onComment={onComment} onLike={onLike} likedCommentIds={likedCommentIds} />
-      <div className="detail-side">
-        <SupportersPanel supporters={supporters} total={proposal.supports} />
-        {isGef && onSubmitGefResponse && (
+      {isGef && onSubmitGefResponse && (
+        <div className="detail-side">
           <div className="gef-response-tools" aria-label="Resposta oficial do GEF">
             <div className="gef-response-tools-head">
               <span className="mini-label">RETORNO OFICIAL DO GEF</span>
@@ -698,8 +672,8 @@ function ProposalDetail({
               )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -707,7 +681,6 @@ function ProposalDetail({
 function ProposalPreview({
   proposal,
   comments,
-  supporters,
   user,
   isGef,
   supported,
@@ -723,7 +696,6 @@ function ProposalPreview({
 }: {
   proposal: Proposal;
   comments: ProposalComment[];
-  supporters: Supporter[];
   user: User;
   isGef: boolean;
   supported: boolean;
@@ -762,7 +734,7 @@ function ProposalPreview({
           <Icon name="bookmark" size={17} />{saved ? "Acompanhando" : "Acompanhar"}
         </button>
       </div>
-      <ProposalDetail proposal={proposal} comments={comments} supporters={supporters} user={user} isGef={isGef} onComment={onComment} onLike={onLike} likedCommentIds={likedCommentIds} onSubmitGefResponse={onSubmitGefResponse} />
+      <ProposalDetail proposal={proposal} comments={comments} user={user} isGef={isGef} onComment={onComment} onLike={onLike} likedCommentIds={likedCommentIds} onSubmitGefResponse={onSubmitGefResponse} />
       {isGef && (
         <div className="context-proposal-actions">
           <span><Icon name="spark" size={15} /> Ações do GEF</span>
@@ -1226,7 +1198,7 @@ function AuthView({ onLogin, onSignup }: { onLogin: (name: string, password: str
         <form onSubmit={submit}>
           <label>Nome de usuário<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: ana.silva ou administrador" autoComplete="username" required /></label>
           {mode === "signup" && <label>Turma<input value={turma} onChange={(event) => setTurma(event.target.value)} placeholder="Ex.: 8º ano A ou 2º EM" autoComplete="organization" required /></label>}
-          <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres (adm: admteste123)" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required /></label>
+          <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button type="submit" className="primary-button auth-submit" disabled={busy}>
             {busy ? "Aguarde…" : mode === "login" ? "Entrar na plataforma" : "Criar minha conta"}
@@ -1235,22 +1207,44 @@ function AuthView({ onLogin, onSignup }: { onLogin: (name: string, password: str
         </form>
         <div className="auth-note">
           <Icon name="info" size={16} />
-          <span>Conta administrativa pré-configurada: <strong>administrador / admteste123</strong> (GEF). Novos estudantes podem se cadastrar em <em>Criar conta</em>.</span>
+          <span>Estudantes podem criar uma conta. O acesso administrativo do GEF é gerenciado com credenciais seguras pela equipe responsável.</span>
         </div>
       </div>
-      <p className="auth-demo-note">Plataforma 100% funcional com persistência e backend ativo</p>
     </main>
   );
 }
 
+function getInitialUiPreferences() {
+  if (typeof window === "undefined") return {};
+  return parseUiPreferences(window.localStorage.getItem("comunica-farroupilha-ui"));
+}
+
+function getLegacyBrowserState() {
+  if (typeof window === "undefined") return null;
+  if (window.localStorage.getItem("comunica-farroupilha-legacy-imported")) return null;
+  for (const key of ["comunica-farroupilha-demo", "gremio-comunica-demo"]) {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) continue;
+    try {
+      return { key, data: JSON.parse(raw) as unknown };
+    } catch {}
+  }
+  return null;
+}
+
 export function GEFShell() {
+  const [initialPreferences] = useState(getInitialUiPreferences);
   const [state, setState] = useState<DemoState>(defaultState);
-  const [view, setView] = useState<View>("proposals");
+  const [view, setView] = useState<View>(() =>
+    initialPreferences.view && ["proposals", "saved", "agenda", "chapas", "notifications", "gef"].includes(initialPreferences.view)
+      ? initialPreferences.view as View
+      : "proposals",
+  );
   const [selectedId, setSelectedId] = useState("");
-  const [query, setQuery] = useState("");
-  const [themeFilter, setThemeFilter] = useState("Todos");
-  const [statusFilter, setStatusFilter] = useState<ProposalStatus | "all">("all");
-  const [sort, setSort] = useState<"recent" | "supports">("recent");
+  const [query, setQuery] = useState(initialPreferences.query ?? "");
+  const [themeFilter, setThemeFilter] = useState(initialPreferences.themeFilter ?? "Todos");
+  const [statusFilter, setStatusFilter] = useState<ProposalStatus | "all">((initialPreferences.statusFilter as ProposalStatus | "all") ?? "all");
+  const [sort, setSort] = useState<"recent" | "supports">(initialPreferences.sort === "supports" ? "supports" : "recent");
   const [composerOpen, setComposerOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [agendaMonthKey, setAgendaMonthKey] = useState("2026-09");
@@ -1258,79 +1252,58 @@ export function GEFShell() {
   const [gefProposalId, setGefProposalId] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState<"sidebar" | "topbar" | null>(null);
   const interactionRevisions = useRef(new Map<string, number>());
-  const [authReady, setAuthReady] = useState(false);
+  const loadRevision = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
+  const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
+  const [loadError, setLoadError] = useState("");
+  const [interactionError, setInteractionError] = useState("");
+  const [legacyState, setLegacyState] = useState(getLegacyBrowserState);
+  const [legacyImportStatus, setLegacyImportStatus] = useState<"idle" | "importing" | "success">("idle");
   const [evaluatingActivity, setEvaluatingActivity] = useState<Activity | null>(null);
   const [summaryActivity, setSummaryActivity] = useState<Activity | null>(null);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      // 1. Initial fast local hydration
-      try {
-        const saved = window.localStorage.getItem("comunica-farroupilha-demo") ?? window.localStorage.getItem("gremio-comunica-demo");
-        if (saved) {
-          const parsed = JSON.parse(saved) as Partial<DemoState>;
-          setState((curr) => ({
-            ...curr,
-            ...parsed,
-            accounts: parsed.accounts && parsed.accounts.length > 0 ? parsed.accounts : curr.accounts,
-            proposals: parsed.proposals ?? curr.proposals,
-            comments: parsed.comments ?? curr.comments,
-            activities: parsed.activities ?? curr.activities,
-            supporters: parsed.supporters ?? curr.supporters,
-            supportedByUser: parsed.supportedByUser ?? curr.supportedByUser,
-            savedByUser: parsed.savedByUser ?? curr.savedByUser,
-            likedCommentsByUser: parsed.likedCommentsByUser ?? curr.likedCommentsByUser,
-            activityFeedbacks: parsed.activityFeedbacks ?? curr.activityFeedbacks,
-            chapaQuestions: parsed.chapaQuestions ?? curr.chapaQuestions,
-          }));
-        }
-      } catch {}
-
-      // 2. Load active session from /api/auth/me
-      fetch("/api/auth/me")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.user) {
-            setState((curr) => ({ ...curr, user: data.user }));
-          }
-        })
-        .catch(() => {});
-
-      // 3. Load live platform store from /api/platform
-      fetch("/api/platform")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.data) {
-            const p = data.data;
-            setState((curr) => ({
-              ...curr,
-              proposals: p.proposals ?? curr.proposals,
-              comments: p.comments ?? curr.comments,
-              activities: p.activities ?? curr.activities,
-              notifications: p.notifications ?? curr.notifications,
-              supporters: p.supportersByProposal ?? curr.supporters,
-              supportedByUser: p.supportedByUser ?? curr.supportedByUser,
-              savedByUser: p.savedByUser ?? curr.savedByUser,
-              likedCommentsByUser: p.likedCommentsByUser ?? curr.likedCommentsByUser,
-              activityFeedbacks: p.activityFeedbacks ?? curr.activityFeedbacks,
-              chapaQuestions: p.chapaQuestions ?? curr.chapaQuestions,
-            }));
-          }
-        })
-        .catch(() => {})
-        .finally(() => setAuthReady(true));
-    }, 0);
-
-    return () => window.clearTimeout(timer);
+  const refreshPlatform = useCallback(async () => {
+    const revision = ++loadRevision.current;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    setLoadStatus("loading");
+    setLoadError("");
+    try {
+      const { user, snapshot } = await loadPlatform(controller.signal);
+      if (revision !== loadRevision.current) return;
+      setState({
+        user,
+        proposals: snapshot.proposals,
+        comments: snapshot.comments,
+        activities: snapshot.activities,
+        notifications: snapshot.notifications,
+        supportedByUser: snapshot.supportedByUser,
+        savedByUser: snapshot.savedByUser,
+        likedCommentsByUser: snapshot.likedCommentsByUser,
+        supporters: snapshot.supportersByProposal,
+        activityFeedbacks: snapshot.activityFeedbacks,
+        chapaQuestions: snapshot.chapaQuestions,
+      });
+      setLoadStatus("ready");
+    } catch (error) {
+      if (controller.signal.aborted || revision !== loadRevision.current) return;
+      setLoadError(error instanceof Error ? error.message : "Não foi possível carregar a plataforma.");
+      setLoadStatus("error");
+    }
   }, []);
 
   useEffect(() => {
-    if (authReady) {
-      try {
-        window.localStorage.setItem("comunica-farroupilha-demo", JSON.stringify(state));
-      } catch {}
-    }
-  }, [state, authReady]);
+    const timer = window.setTimeout(() => void refreshPlatform(), 0);
+    return () => {
+      window.clearTimeout(timer);
+      loadController.current?.abort();
+    };
+  }, [refreshPlatform]);
+
+  useEffect(() => {
+    window.localStorage.setItem("comunica-farroupilha-ui", serializeUiPreferences({ view, query, themeFilter, statusFilter, sort }));
+  }, [view, query, themeFilter, statusFilter, sort]);
 
   const user = state.user;
   const isGef = user?.role === "gef";
@@ -1374,78 +1347,21 @@ export function GEFShell() {
   const agendaActivities = useMemo(() => state.activities.filter((activity) => activity.date.slice(0, 7) === agendaMonthKey), [state.activities, agendaMonthKey]);
   const agendaProposal = agendaProposalId ? state.proposals.find((proposal) => proposal.id === agendaProposalId) : undefined;
   const gefProposal = gefProposalId ? state.proposals.find((proposal) => proposal.id === gefProposalId) : undefined;
-
-  function beginInteraction(key: string) {
-    const revision = (interactionRevisions.current.get(key) ?? 0) + 1;
-    interactionRevisions.current.set(key, revision);
-    return revision;
-  }
-
-  function isLatestInteraction(key: string, revision: number) {
-    return interactionRevisions.current.get(key) === revision;
-  }
+  const legacyPreview = useMemo(() => legacyState ? previewLegacyState(legacyState.data) : null, [legacyState]);
 
   async function login(name: string, password: string): Promise<string | null> {
-    const trimmedName = name.trim();
-    const localAccount = state.accounts.find(
-      (a) => a.name.toLowerCase() === trimmedName.toLowerCase() && a.password === password
-    );
-
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: trimmedName,
-          password,
-          clientAccount: localAccount ? { name: localAccount.name, turma: localAccount.turma, password: localAccount.password } : undefined,
-        }),
+        body: JSON.stringify({ name: name.trim(), password }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        if (localAccount) {
-          setState((curr) => ({
-            ...curr,
-            user: { id: localAccount.id, name: localAccount.name, turma: localAccount.turma, role: localAccount.role },
-          }));
-          setView("proposals");
-          return null;
-        }
-        return data.error || "Nome de usuário ou senha incorretos.";
-      }
-      setState((curr) => ({ ...curr, user: data.user }));
-      fetch("/api/platform")
-        .then((r) => r.json())
-        .then((pData) => {
-          if (pData.data) {
-            const p = pData.data;
-            setState((curr) => ({
-              ...curr,
-              proposals: p.proposals ?? curr.proposals,
-              comments: p.comments ?? curr.comments,
-              activities: p.activities ?? curr.activities,
-              notifications: p.notifications ?? curr.notifications,
-              supporters: p.supportersByProposal ?? curr.supporters,
-              supportedByUser: p.supportedByUser ?? curr.supportedByUser,
-              savedByUser: p.savedByUser ?? curr.savedByUser,
-              likedCommentsByUser: p.likedCommentsByUser ?? curr.likedCommentsByUser,
-              activityFeedbacks: p.activityFeedbacks ?? curr.activityFeedbacks,
-              chapaQuestions: p.chapaQuestions ?? curr.chapaQuestions,
-            }));
-          }
-        })
-        .catch(() => {});
+      if (!res.ok) return data.error || "Nome de usuário ou senha incorretos.";
+      await refreshPlatform();
       setView("proposals");
       return null;
     } catch {
-      if (localAccount) {
-        setState((curr) => ({
-          ...curr,
-          user: { id: localAccount.id, name: localAccount.name, turma: localAccount.turma, role: localAccount.role },
-        }));
-        setView("proposals");
-        return null;
-      }
       return "Erro ao conectar com o servidor.";
     }
   }
@@ -1461,59 +1377,12 @@ export function GEFShell() {
         body: JSON.stringify({ name: trimmedName, turma: trimmedTurma, password }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        return data.error || "Não foi possível criar a conta.";
-      }
-      const newAccount: Account = {
-        id: data.user.id,
-        name: data.user.name,
-        turma: data.user.turma,
-        role: data.user.role,
-        password,
-      };
-      setState((curr) => ({
-        ...curr,
-        user: data.user,
-        accounts: [...curr.accounts.filter((a) => a.name.toLowerCase() !== trimmedName.toLowerCase()), newAccount],
-      }));
-      fetch("/api/platform")
-        .then((r) => r.json())
-        .then((pData) => {
-          if (pData.data) {
-            const p = pData.data;
-            setState((curr) => ({
-              ...curr,
-              proposals: p.proposals ?? curr.proposals,
-              comments: p.comments ?? curr.comments,
-              activities: p.activities ?? curr.activities,
-              notifications: p.notifications ?? curr.notifications,
-              supporters: p.supportersByProposal ?? curr.supporters,
-              supportedByUser: p.supportedByUser ?? curr.supportedByUser,
-              savedByUser: p.savedByUser ?? curr.savedByUser,
-              likedCommentsByUser: p.likedCommentsByUser ?? curr.likedCommentsByUser,
-              activityFeedbacks: p.activityFeedbacks ?? curr.activityFeedbacks,
-              chapaQuestions: p.chapaQuestions ?? curr.chapaQuestions,
-            }));
-          }
-        })
-        .catch(() => {});
+      if (!res.ok) return data.error || "Não foi possível criar a conta.";
+      await refreshPlatform();
       setView("proposals");
       return null;
     } catch {
-      const newAccount: Account = {
-        id: `acc-${Date.now()}`,
-        name: trimmedName,
-        turma: trimmedTurma,
-        role: "student",
-        password,
-      };
-      setState((curr) => ({
-        ...curr,
-        user: { id: newAccount.id, name: newAccount.name, turma: newAccount.turma, role: newAccount.role },
-        accounts: [...curr.accounts.filter((a) => a.name.toLowerCase() !== trimmedName.toLowerCase()), newAccount],
-      }));
-      setView("proposals");
-      return null;
+      return "Erro ao conectar com o servidor.";
     }
   }
 
@@ -1521,7 +1390,7 @@ export function GEFShell() {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {}
-    setState((curr) => ({ ...curr, user: null }));
+    await refreshPlatform();
     setProfileOpen(null);
   }
 
@@ -1539,41 +1408,23 @@ export function GEFShell() {
     const previousSupports = state.proposals.find((proposal) => proposal.id === id)?.supports ?? 0;
     const optimisticSupported = !wasSupported;
     const interactionKey = `support:${id}`;
-    const interactionRevision = beginInteraction(interactionKey);
+    const interactionRevision = beginInteraction(interactionRevisions.current, interactionKey);
 
-    function applySupportState(supported: boolean, totalSupports: number) {
-      setState((curr) => {
-        const userSupports = curr.supportedByUser?.[currentUser.id] ?? [];
-        const nextUserSupports = supported
-          ? (userSupports.includes(id) ? userSupports : [...userSupports, id])
-          : userSupports.filter((item) => item !== id);
-        const currentSupporters = curr.supporters[id] ?? [];
-        const nextSupporters = supported
-          ? (currentSupporters.some((supporter) => supporter.id === currentUser.id) ? currentSupporters : [...currentSupporters, { id: currentUser.id, name: currentUser.name, turma: currentUser.turma }])
-          : currentSupporters.filter((supporter) => supporter.id !== currentUser.id);
-        return {
-          ...curr,
-          supportedByUser: { ...curr.supportedByUser, [currentUser.id]: nextUserSupports },
-          supporters: { ...curr.supporters, [id]: nextSupporters },
-          proposals: curr.proposals.map((proposal) => proposal.id === id ? { ...proposal, supports: totalSupports } : proposal),
-        };
-      });
-    }
-
-    applySupportState(optimisticSupported, Math.max(0, previousSupports + (optimisticSupported ? 1 : -1)));
+    setInteractionError("");
+    setState((curr) => applySupportState(curr, currentUser, id, optimisticSupported, Math.max(0, previousSupports + (optimisticSupported ? 1 : -1))));
 
     try {
-      const res = await fetch(`/api/proposals/${id}/support`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ supported: optimisticSupported }) });
+      const res = await fetch(`/api/proposals/${id}/support`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ supported: optimisticSupported, revision: interactionRevision }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Não foi possível atualizar o apoio.");
-      if (!isLatestInteraction(interactionKey, interactionRevision)) return;
+      if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
       const supported = typeof data.data?.supported === "boolean" ? data.data.supported : optimisticSupported;
       const totalSupports = typeof data.data?.supports === "number" ? data.data.supports : previousSupports + (supported ? 1 : -1);
-      applySupportState(supported, Math.max(0, totalSupports));
+      setState((curr) => applySupportState(curr, currentUser, id, supported, Math.max(0, totalSupports)));
     } catch (err) {
-      if (!isLatestInteraction(interactionKey, interactionRevision)) return;
-      applySupportState(wasSupported, previousSupports);
-      console.error(err);
+      if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
+      setState((curr) => applySupportState(curr, currentUser, id, wasSupported, previousSupports));
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível atualizar o apoio.");
     }
   }
 
@@ -1583,31 +1434,22 @@ export function GEFShell() {
     const wasSaved = userSavedIds.includes(id);
     const optimisticSaved = !wasSaved;
     const interactionKey = `save:${id}`;
-    const interactionRevision = beginInteraction(interactionKey);
+    const interactionRevision = beginInteraction(interactionRevisions.current, interactionKey);
 
-    function applySavedState(saved: boolean) {
-      setState((curr) => {
-        const userSaved = curr.savedByUser?.[currentUser.id] ?? [];
-        const nextUserSaved = saved
-          ? (userSaved.includes(id) ? userSaved : [...userSaved, id])
-          : userSaved.filter((item) => item !== id);
-        return { ...curr, savedByUser: { ...curr.savedByUser, [currentUser.id]: nextUserSaved } };
-      });
-    }
-
-    applySavedState(optimisticSaved);
+    setInteractionError("");
+    setState((curr) => applySavedState(curr, currentUser.id, id, optimisticSaved));
 
     try {
-      const res = await fetch(`/api/proposals/${id}/save`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ saved: optimisticSaved }) });
+      const res = await fetch(`/api/proposals/${id}/save`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ saved: optimisticSaved, revision: interactionRevision }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Não foi possível atualizar o acompanhamento.");
-      if (!isLatestInteraction(interactionKey, interactionRevision)) return;
+      if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
       const saved = typeof data.data?.saved === "boolean" ? data.data.saved : optimisticSaved;
-      applySavedState(saved);
+      setState((curr) => applySavedState(curr, currentUser.id, id, saved));
     } catch (err) {
-      if (!isLatestInteraction(interactionKey, interactionRevision)) return;
-      applySavedState(wasSaved);
-      console.error(err);
+      if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
+      setState((curr) => applySavedState(curr, currentUser.id, id, wasSaved));
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível atualizar o acompanhamento.");
     }
   }
 
@@ -1620,37 +1462,17 @@ export function GEFShell() {
         body: JSON.stringify(input),
       });
       const data = await res.json();
-      const newProposal: Proposal = data.data ?? {
-        id: `p-${Date.now()}`,
-        ...input,
-        author: user.role === "gef" ? "Grêmio Estudantil Farroupilha" : user.name,
-        authorId: user.id,
-        origin: user.role === "gef" ? "gef" : "student",
-        status: "received",
-        supports: 0,
-        comments: 0,
-        createdAt: "Agora",
-        updatedAt: "Agora",
-      };
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível publicar a proposta.");
+      const newProposal: Proposal = data.data;
       setState((curr) => ({
         ...curr,
         proposals: [newProposal, ...curr.proposals],
         supporters: { ...curr.supporters, [newProposal.id]: [] },
-        notifications: [
-          {
-            id: `n-${Date.now()}`,
-            title: "Nova proposta publicada",
-            body: `${newProposal.anonymous ? "Uma pessoa estudante" : newProposal.author} publicou uma ideia para o recreio.`,
-            createdAt: "Agora",
-            read: false,
-          },
-          ...curr.notifications,
-        ],
       }));
       setSelectedId(newProposal.id);
       setComposerOpen(false);
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível publicar a proposta.");
     }
   }
 
@@ -1662,19 +1484,14 @@ export function GEFShell() {
         body: JSON.stringify({ status, ...(gefResponse ? { gefResponse } : {}) }),
       });
       const data = await res.json();
-      const updated = data.data;
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível atualizar a proposta.");
+      const updated: Proposal = data.data;
       setState((curr) => ({
         ...curr,
-        proposals: curr.proposals.map((p) => p.id === id ? {
-          ...p,
-          status: updated?.status ?? status,
-          gefResponse: updated?.gefResponse ?? (gefResponse || p.gefResponse),
-          gefResponseAt: updated?.gefResponseAt ?? (gefResponse ? "Agora" : p.gefResponseAt),
-          updatedAt: "Agora",
-        } : p),
+        proposals: curr.proposals.map((proposal) => proposal.id === id ? updated : proposal),
       }));
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível atualizar a proposta.");
     }
   }
 
@@ -1686,18 +1503,14 @@ export function GEFShell() {
         body: JSON.stringify({ gefResponse }),
       });
       const data = await res.json();
-      const updated = data.data;
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível salvar a resposta do GEF.");
+      const updated: Proposal = data.data;
       setState((curr) => ({
         ...curr,
-        proposals: curr.proposals.map((p) => p.id === id ? {
-          ...p,
-          gefResponse: updated?.gefResponse ?? gefResponse,
-          gefResponseAt: updated?.gefResponseAt ?? "Agora",
-          updatedAt: "Agora",
-        } : p),
+        proposals: curr.proposals.map((proposal) => proposal.id === id ? updated : proposal),
       }));
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível salvar a resposta do GEF.");
     }
   }
 
@@ -1712,34 +1525,15 @@ export function GEFShell() {
         body: JSON.stringify({ body, anonymous, ...(parentId ? { parentId } : {}) }),
       });
       const data = await res.json();
-      const newComment: ProposalComment = data.data ?? {
-        id: `c-${Date.now()}`,
-        proposalId,
-        author: user.name,
-        authorId: user.id,
-        role: user.role,
-        anonymous,
-        body,
-        createdAt: "Agora",
-        ...(parentId ? { parentId } : {}),
-      };
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível publicar o comentário.");
+      const newComment: ProposalComment = data.data;
       setState((curr) => ({
         ...curr,
         comments: [...curr.comments, newComment],
         proposals: curr.proposals.map((p) => p.id === proposalId ? { ...p, comments: p.comments + 1, updatedAt: "Agora" } : p),
-        notifications: [
-          {
-            id: `n-${Date.now()}`,
-            title: "Nova interação na comunidade",
-            body: `${anonymous ? "Uma pessoa estudante" : user.name} comentou uma proposta.`,
-            createdAt: "Agora",
-            read: false,
-          },
-          ...curr.notifications,
-        ],
       }));
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível publicar o comentário.");
     }
   }
 
@@ -1749,33 +1543,27 @@ export function GEFShell() {
     const wasLiked = userLikedCommentIds.includes(commentId);
     const previousLikes = state.comments.find((comment) => comment.id === commentId)?.likes ?? 0;
     const optimisticLiked = !wasLiked;
-
-    function applyLikeState(liked: boolean, likes: number) {
-      setState((curr) => {
-        const currentIds = curr.likedCommentsByUser?.[currentUser.id] ?? [];
-        const nextIds = liked
-          ? (currentIds.includes(commentId) ? currentIds : [...currentIds, commentId])
-          : currentIds.filter((id) => id !== commentId);
-        return {
-          ...curr,
-          likedCommentsByUser: { ...curr.likedCommentsByUser, [currentUser.id]: nextIds },
-          comments: curr.comments.map((comment) => comment.id === commentId ? { ...comment, likes } : comment),
-        };
-      });
-    }
-
-    applyLikeState(optimisticLiked, Math.max(0, previousLikes + (optimisticLiked ? 1 : -1)));
+    const interactionKey = `like:${commentId}`;
+    const interactionRevision = beginInteraction(interactionRevisions.current, interactionKey);
+    setInteractionError("");
+    setState((curr) => applyCommentLikeState(curr, currentUser.id, commentId, optimisticLiked, Math.max(0, previousLikes + (optimisticLiked ? 1 : -1))));
 
     try {
-      const res = await fetch(`/api/comments/${commentId}/like`, { method: "POST" });
+      const res = await fetch(`/api/comments/${commentId}/like`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ liked: optimisticLiked, revision: interactionRevision }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Não foi possível atualizar a curtida.");
+      if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
       const liked = typeof data.data?.liked === "boolean" ? data.data.liked : optimisticLiked;
       const likes = typeof data.data?.likes === "number" ? data.data.likes : previousLikes + (liked ? 1 : -1);
-      applyLikeState(liked, Math.max(0, likes));
+      setState((curr) => applyCommentLikeState(curr, currentUser.id, commentId, liked, Math.max(0, likes)));
     } catch (err) {
-      applyLikeState(wasLiked, previousLikes);
-      console.error(err);
+      if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
+      setState((curr) => applyCommentLikeState(curr, currentUser.id, commentId, wasLiked, previousLikes));
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível atualizar a curtida.");
     }
   }
 
@@ -1787,33 +1575,19 @@ export function GEFShell() {
         body: JSON.stringify(activityInput),
       });
       const data = await res.json();
-      const newActivity: Activity = data.data ?? {
-        id: `a-${Date.now()}`,
-        ...activityInput,
-        status: "upcoming",
-      };
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível criar a atividade.");
+      const newActivity: Activity = data.data;
       setState((curr) => ({
         ...curr,
         activities: [newActivity, ...curr.activities],
         proposals: curr.proposals.map((p) => p.id === activityInput.proposalId ? { ...p, status: "scheduled", updatedAt: "Agora" } : p),
-        notifications: [
-          {
-            id: `n-${Date.now()}`,
-            title: "Nova atividade no recreio",
-            body: `${newActivity.title} · ${newActivity.date} · ${newActivity.place}`,
-            createdAt: "Agora",
-            read: false,
-            activityId: newActivity.id,
-          },
-          ...curr.notifications,
-        ],
       }));
       setAgendaMonthKey(newActivity.date.slice(0, 7));
       setAgendaProposalId(newActivity.proposalId);
       setActivityOpen(false);
       setView("agenda");
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível criar a atividade.");
     }
   }
 
@@ -1825,20 +1599,21 @@ export function GEFShell() {
         body: JSON.stringify({ status }),
       });
       const data = await res.json();
-      const updated = data.data;
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível atualizar a atividade.");
+      const updated: Activity = data.data;
       setState((curr) => ({
         ...curr,
-        activities: curr.activities.map((a) => a.id === activityId ? { ...a, status: updated?.status ?? status } : a),
+        activities: curr.activities.map((activity) => activity.id === activityId ? updated : activity),
         proposals: status === "done" ? curr.proposals.map((p) => {
           const act = curr.activities.find((a) => a.id === activityId);
           return act && act.proposalId === p.id ? { ...p, status: "completed", updatedAt: "Agora" } : p;
         }) : curr.proposals,
       }));
       if (summaryActivity && summaryActivity.id === activityId) {
-        setSummaryActivity((curr) => curr ? { ...curr, status: updated?.status ?? status } : null);
+        setSummaryActivity(updated);
       }
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível atualizar a atividade.");
     }
   }
 
@@ -1851,15 +1626,8 @@ export function GEFShell() {
         body: JSON.stringify(feedback),
       });
       const data = await res.json();
-      const newFeedback: ActivityFeedback = data.data ?? {
-        id: `af-${Date.now()}`,
-        activityId,
-        userId: user.id,
-        userName: user.name,
-        turma: user.turma,
-        ...feedback,
-        createdAt: "Agora",
-      };
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível enviar a avaliação.");
+      const newFeedback: ActivityFeedback = data.data;
       setState((curr) => {
         const currentList = curr.activityFeedbacks[activityId] ?? [];
         const filtered = currentList.filter((item) => item.userId !== user.id);
@@ -1872,7 +1640,7 @@ export function GEFShell() {
         };
       });
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível enviar a avaliação.");
     }
   }
 
@@ -1885,23 +1653,14 @@ export function GEFShell() {
         body: JSON.stringify({ chapaId, proposalArea: area, proposalTitle: title, question }),
       });
       const data = await res.json();
-      const newQ: ChapaQuestion = data.data ?? {
-        id: `cq-${Date.now()}`,
-        chapaId,
-        proposalArea: area,
-        proposalTitle: title,
-        question,
-        author: user.name,
-        authorId: user.id,
-        turma: user.turma,
-        createdAt: "Agora",
-      };
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível enviar a dúvida.");
+      const newQ: ChapaQuestion = data.data;
       setState((curr) => ({
         ...curr,
         chapaQuestions: [newQ, ...curr.chapaQuestions],
       }));
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível enviar a dúvida.");
     }
   }
 
@@ -1914,40 +1673,82 @@ export function GEFShell() {
         body: JSON.stringify({ questionId, answer, answeredBy: user.name }),
       });
       const data = await res.json();
-      const updated = data.data;
+      if (!res.ok || !data.data) throw new Error(data.error || "Não foi possível responder a dúvida.");
+      const updated: ChapaQuestion = data.data;
       setState((curr) => ({
-        ...curr,
-        chapaQuestions: curr.chapaQuestions.map((q) => q.id === questionId ? {
-          ...q,
-          answer: updated?.answer ?? answer,
-          answeredBy: updated?.answeredBy ?? user.name,
-          answeredAt: updated?.answeredAt ?? "Agora",
-        } : q),
+        ...curr, chapaQuestions: curr.chapaQuestions.map((question) => question.id === questionId ? updated : question),
       }));
     } catch (err) {
-      console.error(err);
+      setInteractionError(err instanceof Error ? err.message : "Não foi possível responder a dúvida.");
     }
   }
 
-  function markAllRead() {
-    fetch("/api/notifications", { method: "PATCH" }).catch(() => {});
+  async function markAllRead() {
+    const previous = state.notifications;
     setState((curr) => ({ ...curr, notifications: curr.notifications.map((n) => ({ ...n, read: true })) }));
+    try {
+      const response = await fetch("/api/notifications", { method: "PATCH" });
+      if (!response.ok) throw new Error("Não foi possível atualizar as notificações.");
+    } catch (error) {
+      setState((curr) => ({ ...curr, notifications: previous }));
+      setInteractionError(error instanceof Error ? error.message : "Não foi possível atualizar as notificações.");
+    }
+  }
+
+  async function importLegacyData() {
+    if (!legacyState || !user || user.role !== "gef") return;
+    setLegacyImportStatus("importing");
+    setInteractionError("");
+    try {
+      const response = await fetch("/api/admin/legacy-import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(sanitizeLegacyImport(legacyState.data)),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Não foi possível importar os dados antigos.");
+      window.localStorage.setItem("comunica-farroupilha-legacy-imported", body.data?.migrationKey ?? "done");
+      setLegacyImportStatus("success");
+      await refreshPlatform();
+      setView("gef");
+    } catch (error) {
+      setLegacyImportStatus("idle");
+      setInteractionError(error instanceof Error ? error.message : "Não foi possível importar os dados antigos.");
+    }
+  }
+
+  function clearLegacyData() {
+    window.localStorage.removeItem("comunica-farroupilha-demo");
+    window.localStorage.removeItem("gremio-comunica-demo");
+    setLegacyState(null);
   }
 
   function resetDemo() {
-    window.localStorage.removeItem("comunica-farroupilha-demo");
-    window.localStorage.removeItem("gremio-comunica-demo");
-    setState(defaultState);
+    window.localStorage.removeItem("comunica-farroupilha-ui");
     setView("proposals");
     setProfileOpen(null);
+    void refreshPlatform();
   }
 
-  if (!authReady) {
+  if (loadStatus === "loading") {
     return (
       <div className="app-loading">
         <span className="loading-mark"><Icon name="message" size={24} /></span>
         <span>Carregando a conversa…</span>
       </div>
+    );
+  }
+
+  if (loadStatus === "error") {
+    return (
+      <main className="app-load-error" role="alert">
+        <span className="loading-mark"><Icon name="info" size={24} /></span>
+        <h1>Não foi possível carregar a plataforma</h1>
+        <p>{loadError}</p>
+        <button type="button" className="primary-button tactile-control" onClick={() => void refreshPlatform()}>
+          Tentar novamente
+        </button>
+      </main>
     );
   }
 
@@ -1957,6 +1758,13 @@ export function GEFShell() {
 
   return (
     <div className="app-shell">
+      {interactionError && (
+        <div className="interaction-error" role="status">
+          <Icon name="info" size={17} />
+          <span>{interactionError}</span>
+          <button type="button" aria-label="Fechar aviso" onClick={() => setInteractionError("")}><Icon name="close" size={14} /></button>
+        </div>
+      )}
       <a className="app-skip" href="#app-content">Pular para o conteúdo</a>
       <aside className="app-sidebar">
         <div className="app-logo" aria-label="Comunica Farroupilha">
@@ -1966,7 +1774,7 @@ export function GEFShell() {
           <button className={view === "proposals" ? "active" : ""} onClick={() => changeView("proposals")}><Icon name="message" size={20} />Propostas</button>
           <button className={view === "saved" ? "active" : ""} onClick={() => changeView("saved")}><Icon name="bookmark" size={20} />Acompanhando</button>
           <button className={view === "agenda" ? "active" : ""} onClick={() => changeView("agenda")}><Icon name="calendar" size={20} />Agenda</button>
-          <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} />Chapas</button>
+          {ELECTIONS_ENABLED && <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} />Chapas</button>}
           <button className={view === "notifications" ? "active" : ""} onClick={() => changeView("notifications")}>
             <Icon name="bell" size={20} />Notificações{unread > 0 && <span className="nav-count">{unread}</span>}
           </button>
@@ -2090,7 +1898,6 @@ export function GEFShell() {
                       <ProposalDetail
                         proposal={proposal}
                         comments={state.comments}
-                        supporters={state.supporters[proposal.id] ?? []}
                         user={user}
                         isGef={isGef}
                         onComment={addComment}
@@ -2149,7 +1956,6 @@ export function GEFShell() {
                         <ProposalDetail
                           proposal={proposal}
                           comments={state.comments}
-                          supporters={state.supporters[proposal.id] ?? []}
                           user={user}
                           isGef={isGef}
                           onComment={addComment}
@@ -2263,7 +2069,6 @@ export function GEFShell() {
                 <ProposalPreview
                   proposal={agendaProposal}
                   comments={state.comments}
-                  supporters={state.supporters[agendaProposal.id] ?? []}
                   user={user}
                   isGef={isGef}
                   supported={userSupportedIds.includes(agendaProposal.id)}
@@ -2299,7 +2104,7 @@ export function GEFShell() {
             </section>
           )}
 
-          {view === "chapas" && (
+          {ELECTIONS_ENABLED && view === "chapas" && (
             <ChapasView
               questions={state.chapaQuestions}
               isGef={isGef}
@@ -2330,7 +2135,7 @@ export function GEFShell() {
                   >
                     <span className="notification-icon"><Icon name={notification.activityId ? "calendar" : "message"} size={19} /></span>
                     <span>
-                      <strong>{notification.title}</strong>
+                      <strong>{notification.title}{(notification.occurrences ?? 1) > 1 ? ` · ${notification.occurrences} eventos` : ""}</strong>
                       <small>{notification.body}</small>
                       <em>{notification.createdAt}</em>
                     </span>
@@ -2353,6 +2158,25 @@ export function GEFShell() {
                   <Icon name="plus" size={17} />Nova atividade
                 </button>
               </div>
+
+              {legacyPreview && Object.values(legacyPreview).some((count) => count > 0) && (
+                <aside className="legacy-import-panel" aria-live="polite">
+                  <span className="legacy-import-icon"><Icon name={legacyImportStatus === "success" ? "check" : "refresh"} size={20} /></span>
+                  <div>
+                    <h3>{legacyImportStatus === "success" ? "Dados antigos importados" : "Dados antigos encontrados neste navegador"}</h3>
+                    <p>
+                      {legacyPreview.proposals} propostas, {legacyPreview.comments} comentários, {legacyPreview.activities} atividades e {legacyPreview.chapaQuestions} dúvidas podem ser preservados no banco.
+                    </p>
+                  </div>
+                  {legacyImportStatus === "success" ? (
+                    <button type="button" className="outline-button tactile-control" onClick={clearLegacyData}>Apagar cópia antiga</button>
+                  ) : (
+                    <button type="button" className="primary-button tactile-control" disabled={legacyImportStatus === "importing"} onClick={importLegacyData}>
+                      {legacyImportStatus === "importing" ? "Importando…" : "Importar dados antigos"}
+                    </button>
+                  )}
+                </aside>
+              )}
 
               {activityOpen && <ActivityComposer proposals={state.proposals} onCancel={() => setActivityOpen(false)} onCreate={createActivity} />}
 
@@ -2394,7 +2218,6 @@ export function GEFShell() {
                 <ProposalPreview
                   proposal={gefProposal}
                   comments={state.comments}
-                  supporters={state.supporters[gefProposal.id] ?? []}
                   user={user}
                   isGef
                   supported={userSupportedIds.includes(gefProposal.id)}
@@ -2417,7 +2240,7 @@ export function GEFShell() {
           <button className={view === "proposals" ? "active" : ""} onClick={() => changeView("proposals")}><Icon name="message" size={20} /><span>Propostas</span></button>
           <button className={view === "saved" ? "active" : ""} onClick={() => changeView("saved")}><Icon name="bookmark" size={20} /><span>Acompanhando</span></button>
           <button className={view === "agenda" ? "active" : ""} onClick={() => changeView("agenda")}><Icon name="calendar" size={20} /><span>Agenda</span></button>
-          <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} /><span>Chapas</span></button>
+          {ELECTIONS_ENABLED && <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} /><span>Chapas</span></button>}
           <button className={view === "notifications" ? "active" : ""} onClick={() => changeView("notifications")}><Icon name="bell" size={20} /><span>Notificações</span>{unread > 0 && <b>{unread}</b>}</button>
           {isGef && <button className={view === "gef" ? "active" : ""} onClick={() => changeView("gef")}><Icon name="grid" size={20} /><span>GEF</span></button>}
         </nav>

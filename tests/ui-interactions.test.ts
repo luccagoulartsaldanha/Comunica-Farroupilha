@@ -74,16 +74,34 @@ test("support and save update the local state before waiting for the API", () =>
 test("support and save requests carry an explicit desired state", () => {
   assert.match(shellSource, /const interactionKey = `support:\$\{id\}`;/);
   assert.match(shellSource, /const interactionKey = `save:\$\{id\}`;/);
-  assert.match(shellSource, /beginInteraction\(interactionKey\)/);
-  assert.match(shellSource, /body: JSON\.stringify\(\{ supported: optimisticSupported \}\)/);
-  assert.match(shellSource, /body: JSON\.stringify\(\{ saved: optimisticSaved \}\)/);
-  assert.match(supportRouteSource, /setSupport\(id, user\.id, desiredSupported\)/);
-  assert.match(saveRouteSource, /setSaved\(id, user\.id, desiredSaved\)/);
+  assert.match(shellSource, /beginInteraction\(interactionRevisions\.current, interactionKey\)/);
+  assert.match(shellSource, /body: JSON\.stringify\(\{ supported: optimisticSupported, revision: interactionRevision \}\)/);
+  assert.match(shellSource, /body: JSON\.stringify\(\{ saved: optimisticSaved, revision: interactionRevision \}\)/);
+  assert.match(supportRouteSource, /await setSupport\(id, user\.id, body\.supported, body\.revision\)/);
+  assert.match(saveRouteSource, /await setSaved\(id, user\.id, body\.saved, body\.revision\)/);
 });
 
 test("comments detail keeps the conversation focused without the explanatory banner", () => {
   assert.doesNotMatch(shellSource, /<aside className="how-card">/);
   assert.doesNotMatch(shellSource, /ÚLTIMO RETORNO DO GEF/);
+});
+
+test("proposal detail does not expose the public supporter roster", () => {
+  assert.doesNotMatch(shellSource, /function SupportersPanel/);
+  assert.doesNotMatch(shellSource, /className="supporters-card"/);
+  assert.doesNotMatch(stylesSource, /\.supporters-card\{/);
+});
+
+test("proposal detail does not leave an empty side rail for students", () => {
+  assert.match(shellSource, /\{isGef && onSubmitGefResponse && \(\s*<div className="detail-side">/s);
+  assert.doesNotMatch(shellSource, /<div className="detail-side">\s*\{isGef && onSubmitGefResponse && \(/s);
+});
+
+test("login omits the backend status marketing note", () => {
+  assert.doesNotMatch(shellSource, /className="auth-demo-note"/);
+  assert.doesNotMatch(shellSource, /Plataforma 100% funcional com persistência e backend ativo/);
+  assert.doesNotMatch(stylesSource, /\.auth-demo-note\{/);
+  assert.match(shellSource, /className="auth-note"/);
 });
 
 test("top-right profile menu is anchored to its trigger", () => {
@@ -123,4 +141,21 @@ test("landing demo keeps its scenario copy concise", () => {
   assert.doesNotMatch(listeningDemoSource, /Como preservar um espaço tranquilo/);
   assert.doesNotMatch(listeningDemoSource, /quem ainda não conhece ninguém/);
   assert.match(listeningDemoSource, /O que você gostaria de ouvir\? Em quais dias\?/);
+});
+
+test("production login never exposes administrative credentials", () => {
+  assert.doesNotMatch(shellSource, /admteste123/);
+  assert.doesNotMatch(shellSource, /Conta administrativa pré-configurada/);
+});
+
+test("resized application logos preserve their intrinsic aspect ratio", () => {
+  assert.match(stylesSource, /\.app-logo img\{width:98px;height:auto/);
+  assert.match(stylesSource, /\.auth-brand img\{width:98px;height:auto/);
+  assert.match(stylesSource, /\.mobile-brand img\{width:73px;height:auto/);
+});
+
+test("proposal metadata uses one creation timestamp consistently", () => {
+  assert.match(shellSource, /Autoria preservada · Criada \$\{proposal\.createdAt\}/);
+  assert.match(shellSource, /Criada \$\{proposal\.createdAt\} · \$\{proposal\.theme\}/);
+  assert.match(shellSource, /ELECTIONS_ENABLED &&/);
 });
