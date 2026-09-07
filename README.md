@@ -2,44 +2,69 @@
 
 Plataforma do GEF para ouvir estudantes e melhorar o lazer nos intervalos do Colégio Farroupilha.
 
-## Executar
+## Stack
 
-Requer Node.js 22 ou superior e pnpm 11.
+- Next.js 16, React 19 e TypeScript;
+- Neon Postgres provisionado pelo Marketplace da Vercel;
+- sessões persistentes em cookie `HttpOnly` com token opaco;
+- senhas derivadas com `scrypt` e salt aleatório.
+
+## Executar localmente
+
+Requer Node.js 22 ou superior, pnpm 11 e acesso ao projeto Vercel `lgs10/comunica-farroupilha`.
 
 ```sh
 pnpm install --frozen-lockfile
+vercel link --yes --project comunica-farroupilha --scope lgs10
+vercel env pull .env.local --environment=development --yes --project comunica-farroupilha --scope lgs10
+pnpm db:migrate
 pnpm dev
 ```
 
-Abra http://localhost:3000. Para produção, use `pnpm build` e `pnpm start`.
+Abra `http://localhost:3000`. O arquivo `.env.local` e a pasta `.vercel` são ignorados pelo Git.
+
+## Banco e conta GEF
+
+Migrações SQL versionadas ficam em `db/migrations` e nunca são executadas implicitamente por uma requisição:
+
+```sh
+pnpm db:migrate
+```
+
+Para preparar a conta administrativa, configure `ADMIN_USERNAME`, `ADMIN_PASSWORD` e, opcionalmente, `ADMIN_CLASS`, depois execute:
+
+```sh
+pnpm db:seed-admin
+```
+
+As variáveis de conexão são fornecidas pela integração Neon. O aplicativo usa `DATABASE_URL`; o migrador prefere `DATABASE_URL_UNPOOLED`.
 
 ## Verificação
 
 ```sh
+pnpm test
 pnpm lint
 pnpm typecheck
 pnpm build
 ```
 
-## Escopo desta versão
+`pnpm test` executa todos os arquivos `tests/*.test.ts`, inclusive testes de integração concorrente contra o banco configurado.
 
-Landing page pública e app demonstrativo responsivo do Comunica Farroupilha. A demo inclui feed de propostas, detalhes com apoiadores e comentários, apoio, acompanhamento com a aba `Acompanhando`, criação anônima ou identificada, agenda com calendário mensal, notificações, catálogo informativo da Chapa 1 e da Chapa 2 por área e visão de temas para o GEF. O piloto considera todo o Ensino Fundamental e Médio. Há Route Handlers em `src/app/api` para o fluxo de backend; o store atual é temporário e está documentado em `docs/backend.md`.
+## Produto
 
-Autenticação futura definida: conta de estudante na plataforma, usando e-mail/senha ou Google. O provedor e a verificação de vínculo escolar ainda serão escolhidos.
+A landing pública fica em `/` e a plataforma autenticada em `/app`. Ela inclui propostas, comentários e respostas, apoio, acompanhamento, agenda, avaliações pós-atividade, notificações, catálogo das chapas e visão administrativa do GEF.
+
+O servidor é a única fonte de verdade. O navegador guarda apenas preferências de interface. Navegadores com dados da versão antiga exibem, somente para o GEF, uma ação explícita e idempotente de importação; contas, senhas e sessões antigas nunca são importadas.
 
 ## Estrutura
 
-- `src/app`: página, layout, metadados e estilos.
-- `src/components`: demonstração de escuta, ícone de seta e shell funcional do app.
-- `public/brand`: marcas utilizadas pela página.
-- `assets/originals`: logo original do projeto fornecida pelo idealizador.
-- `PRODUCT.md`: público, escopo e decisões de produto.
-- `DESIGN.md`: sistema visual documentado após a revisão.
-- `docs/plans`: plano e decisões técnicas.
-- `docs/backend.md`: endpoints, permissões e limites do armazenamento da demo.
+- `src/app`: páginas e Route Handlers;
+- `src/components`: interface da landing e da plataforma;
+- `src/lib/platform-repository.ts`: acesso relacional ao domínio;
+- `src/lib/auth-repository.ts`: contas e sessões persistentes;
+- `src/lib/client-platform-state.ts`: hidratação e interações otimistas;
+- `db/migrations`: esquema versionado;
+- `scripts`: migração e seed administrativo;
+- `docs/backend.md`: contratos, segurança e operação do backend.
 
-As fontes Archivo e Manrope são servidas pelo próprio site através dos pacotes Fontsource. A demo não usa banco persistente nem credencial escolar; as rotas de backend e a sessão temporária estão descritas em `docs/backend.md`. As imagens vieram do idealizador e mantêm sua identificação de origem; não se presume autorização institucional além do uso solicitado no projeto.
-
-## Continuidade
-
-Hospedagem planejada na Vercel com Next.js. Após conectar o repositório GitHub ao projeto, alterações da branch de produção poderão disparar novas publicações. Consulte `docs/delivery.md` para o estado real da publicação e eventuais pendências de acesso.
+O deploy é controlado pela integração Git já existente na Vercel. Não é necessário executar `vercel deploy` manualmente.

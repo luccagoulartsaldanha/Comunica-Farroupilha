@@ -1232,7 +1232,7 @@ function AuthView({ onLogin, onSignup }: { onLogin: (name: string, password: str
         <form onSubmit={submit}>
           <label>Nome de usuário<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: ana.silva ou administrador" autoComplete="username" required /></label>
           {mode === "signup" && <label>Turma<input value={turma} onChange={(event) => setTurma(event.target.value)} placeholder="Ex.: 8º ano A ou 2º EM" autoComplete="organization" required /></label>}
-          <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres (adm: admteste123)" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required /></label>
+          <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button type="submit" className="primary-button auth-submit" disabled={busy}>
             {busy ? "Aguarde…" : mode === "login" ? "Entrar na plataforma" : "Criar minha conta"}
@@ -1241,7 +1241,7 @@ function AuthView({ onLogin, onSignup }: { onLogin: (name: string, password: str
         </form>
         <div className="auth-note">
           <Icon name="info" size={16} />
-          <span>Conta administrativa pré-configurada: <strong>administrador / admteste123</strong> (GEF). Novos estudantes podem se cadastrar em <em>Criar conta</em>.</span>
+          <span>Estudantes podem criar uma conta. O acesso administrativo do GEF é gerenciado com credenciais seguras pela equipe responsável.</span>
         </div>
       </div>
       <p className="auth-demo-note">Plataforma 100% funcional com persistência e backend ativo</p>

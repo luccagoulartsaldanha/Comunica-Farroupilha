@@ -17,6 +17,7 @@ const userId = randomUUID();
 const otherUserId = randomUUID();
 const proposalIds: string[] = [];
 const questionIds: string[] = [];
+const lifecycleUserIds: string[] = [];
 
 after(async () => {
   for (const proposalId of proposalIds) {
@@ -27,6 +28,9 @@ after(async () => {
   }
   await pool.query("DELETE FROM notifications WHERE body LIKE '%[teste-repositorio]%' OR title LIKE '%[teste-repositorio]%'");
   await pool.query("DELETE FROM notifications WHERE body LIKE $1", [`%${userId}%`]);
+  for (const lifecycleUserId of lifecycleUserIds) {
+    await pool.query("DELETE FROM notifications WHERE body LIKE $1", [`%${lifecycleUserId}%`]);
+  }
   await pool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [[userId, otherUserId]]);
   await pool.end();
 });
@@ -35,6 +39,7 @@ test("repository persists the complete proposal and activity lifecycle", async (
   const repository = await import("../src/lib/platform-repository.ts");
   const studentId = randomUUID();
   const gefId = randomUUID();
+  lifecycleUserIds.push(studentId, gefId);
   await pool.query(
     `INSERT INTO users (id, username, username_normalized, class_name, role, password_hash)
      VALUES ($1, $2, $3, '1º EM A', 'student', 'test-hash'),

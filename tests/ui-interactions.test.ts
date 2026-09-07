@@ -124,3 +124,14 @@ test("landing demo keeps its scenario copy concise", () => {
   assert.doesNotMatch(listeningDemoSource, /quem ainda não conhece ninguém/);
   assert.match(listeningDemoSource, /O que você gostaria de ouvir\? Em quais dias\?/);
 });
+
+test("production login never exposes administrative credentials", () => {
+  assert.doesNotMatch(shellSource, /admteste123/);
+  assert.doesNotMatch(shellSource, /Conta administrativa pré-configurada/);
+});
+
+test("resized application logos preserve their intrinsic aspect ratio", () => {
+  assert.match(stylesSource, /\.app-logo img\{width:98px;height:auto/);
+  assert.match(stylesSource, /\.auth-brand img\{width:98px;height:auto/);
+  assert.match(stylesSource, /\.mobile-brand img\{width:73px;height:auto/);
+});

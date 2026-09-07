@@ -1,39 +1,39 @@
-# Entrega — 4 de setembro de 2026
+# Entrega — persistência de produção — 6 de setembro de 2026
 
-## Site publicado
+## Vercel
 
-https://comunica-farroupilha.vercel.app/
+Projeto: `lgs10/comunica-farroupilha`
+Project ID: `prj_H3vlIMV7KuTyyp3m0vpVgAtU1QIr`
+Site atual: https://comunica-farroupilha.vercel.app/
 
-Projeto: `comunica-farroupilha`, conta Vercel `LGS/lgs10`.
-Implantação informada pela integração: `dpl_sBivoGJ1Mt2N9aZoQytQmTSPbw2Z`.
-Inspetor: https://vercel.com/lgs10/comunica-farroupilha/sBivoGJ1Mt2N9aZoQytQmTSPbw2Z
+Foi provisionado pelo Marketplace da Vercel o recurso Neon `comunica-farroupilha-db` e conectado aos ambientes `production`, `preview` e `development`. As variáveis de banco e as credenciais administrativas de seed são gerenciadas pela Vercel e não ficam no Git.
 
-Publicação feita por envio dos arquivos de construção ao conector Vercel. O domínio de produção retornou HTTP 200, título correto e interface funcional sem autenticação Vercel. Os endereços gerados com sufixo `lgs10` exigem login; use o domínio público acima. As ferramentas de consulta de projeto e logs retornaram 404 apesar da publicação pública verificada; não foi possível obter um projectId confiável por essas ferramentas nesta sessão.
+Não houve deploy manual. O push da branch permite que a integração Git existente crie o preview automaticamente.
 
-## GitHub: push manual pelo usuário
+## Mudança de arquitetura
 
-Repositório remoto informado pelo usuário: `goncalofrankefranco/Gr-mio-Comunica-Farroupilha`. O código está preparado localmente e o push ficará a cargo do usuário, conforme solicitado; nenhuma alteração será enviada automaticamente.
+O armazenamento efêmero em memória/`/tmp` e a sessão baseada em arquivo foram removidos. Dados, contas e sessões agora usam Postgres compartilhado. Apoio, acompanhamento e curtida são idempotentes e protegidos contra respostas fora de ordem.
 
-Depois de revisar a demo, o usuário pode fazer o push dessa base e conectar o mesmo repositório ao projeto Vercel existente. Não criar outra implementação nem outro projeto de hospedagem.
+O navegador não persiste mais o estado do domínio. Uma falha de banco é exibida como indisponibilidade com retry, nunca como feed vazio. A visão GEF pode importar de forma explícita a cópia legada presente no navegador.
 
-## Demo atual do Comunica Farroupilha
+## Banco
 
-O caminho `/app` reúne uma demo funcional com feed de propostas, detalhes de cada proposta com apoiadores e comentários, autoria identificada ou anônima, acompanhamento de propostas na aba `Acompanhando`, login local de demonstração, agenda com calendário mensal, notificações, catálogo informativo da Chapa 1 e da Chapa 2 por área e mapa de temas para a visão do GEF. A conta administrativa da demo é `administrador` com a senha `admteste123`; os dados ficam somente no navegador. O piloto considera todo o Ensino Fundamental e Médio.
+- migration inicial: `db/migrations/0001_initial.sql`;
+- execução: `pnpm db:migrate`;
+- seed GEF: `pnpm db:seed-admin`;
+- conta GEF criada: `administrador`;
+- a senha forte gerada está disponível somente no `.env.local` ignorado deste worktree e nas variáveis do projeto Vercel.
 
-A direção de comunicação do Grêmio Estudantil Farroupilha já aprova a ideia e considera essencial desenvolver atividades de lazer no recreio. Essa aprovação está visível na landing page e no espaço de participação do app.
+## Verificação concluída antes do push
 
-## Verificações realizadas
+- testes Node, incluindo concorrência real no Neon e migração idempotente;
+- lint, TypeScript e build de produção;
+- fluxo local no navegador: dois cadastros, proposta, apoio, acompanhamento e cinco recargas consecutivas;
+- isolamento confirmado: a segunda conta vê a proposta, mas não herda apoio nem acompanhamento;
+- health check local retornou banco conectado; logs do servidor registraram respostas 200/201 sem exceções;
+- auditoria Vercel confirmou Neon disponível e variáveis de banco nos ambientes production, preview e development;
+- dados descartáveis criados pela verificação foram removidos; o banco ficou somente com a conta GEF.
 
-- `pnpm build`, `pnpm lint`, `pnpm typecheck`: passaram.
-- `pnpm peers check`: sem incompatibilidades.
-- Desktop de 1440 × 1000 e celular de 390 × 844: layout e controles conferidos; sem transbordamento horizontal observado. Capturas verticais estão em `docs/screens/`.
-- Demonstração alterna cenários via clique e Enter; mantém `aria-pressed` e região `aria-live`.
-- Navegador local e domínio público sem mensagens de erro ou aviso no console durante a verificação.
-- Revisão Impeccable: único ajuste material solicitado foi contraste do botão. Corrigido para #061d32 sobre #ff5000 (5,20:1); veredicto `ship` no escopo dessa correção.
-- Marcas com origem documentada. Logo original mantida; versão WebP de 64 KB preserva a composição e reduz o download.
+## Continuidade operacional
 
-## Continuidade
-
-O Google Doc foi atualizado na aba Projeto com a tecnologia, o escopo e o link público. As demais abas, mapas, logos e histórico foram preservados.
-
-Persistência de produção, consultas reais, integração com Google Workspace e regras operacionais ficam para futuras instruções. Dúvidas de operação e privacidade constam em PRODUCT.md e no Docs; o usuário pediu para guardá-las sem perguntas nesta etapa.
+Antes de abertura ampla, definir verificação de vínculo escolar, política de privacidade, moderação, auditoria de ações administrativas e rate limiting distribuído. Esses itens não alteram a correção desta entrega, mas são necessários para operação institucional em escala.
