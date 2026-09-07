@@ -614,41 +614,9 @@ function CommentThread({
   );
 }
 
-function SupportersPanel({ supporters = [], total }: { supporters?: Supporter[]; total: number }) {
-  const visible = supporters.slice(0, 4);
-  const remaining = Math.max(0, total - visible.length);
-  return (
-    <aside className="supporters-card" aria-label="Pessoas que apoiaram esta proposta">
-      <div className="supporters-head">
-        <span className="how-icon"><Icon name="users" size={19} /></span>
-        <div>
-          <h3>Quem apoiou</h3>
-          <p>{total} {total === 1 ? "apoio" : "apoios"} da comunidade</p>
-        </div>
-      </div>
-      <ul className="supporter-list">
-        {visible.map((supporter) => (
-          <li key={supporter.id}>
-            <Avatar name={supporter.name} small />
-            <span><strong>{supporter.name}</strong><small>{supporter.turma}</small></span>
-          </li>
-        ))}
-        {remaining > 0 && (
-          <li className="supporter-more">
-            <span className="supporter-more-count">+{remaining}</span>
-            <span><strong>Outras pessoas</strong><small>apoios registrados</small></span>
-          </li>
-        )}
-        {visible.length === 0 && <li className="supporters-empty">Seja a primeira pessoa a apoiar.</li>}
-      </ul>
-    </aside>
-  );
-}
-
 function ProposalDetail({
   proposal,
   comments,
-  supporters,
   user,
   onComment,
   onLike,
@@ -658,7 +626,6 @@ function ProposalDetail({
 }: {
   proposal: Proposal;
   comments: ProposalComment[];
-  supporters: Supporter[];
   user: User;
   isGef: boolean;
   onComment: (body: string, anonymous: boolean, parentId?: string) => void;
@@ -681,9 +648,8 @@ function ProposalDetail({
   return (
     <div className="detail-grid" id={`proposal-detail-${proposal.id}`}>
       <CommentThread comments={comments} proposalId={proposal.id} user={user} onComment={onComment} onLike={onLike} likedCommentIds={likedCommentIds} />
-      <div className="detail-side">
-        <SupportersPanel supporters={supporters} total={proposal.supports} />
-        {isGef && onSubmitGefResponse && (
+      {isGef && onSubmitGefResponse && (
+        <div className="detail-side">
           <div className="gef-response-tools" aria-label="Resposta oficial do GEF">
             <div className="gef-response-tools-head">
               <span className="mini-label">RETORNO OFICIAL DO GEF</span>
@@ -706,8 +672,8 @@ function ProposalDetail({
               )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -715,7 +681,6 @@ function ProposalDetail({
 function ProposalPreview({
   proposal,
   comments,
-  supporters,
   user,
   isGef,
   supported,
@@ -731,7 +696,6 @@ function ProposalPreview({
 }: {
   proposal: Proposal;
   comments: ProposalComment[];
-  supporters: Supporter[];
   user: User;
   isGef: boolean;
   supported: boolean;
@@ -770,7 +734,7 @@ function ProposalPreview({
           <Icon name="bookmark" size={17} />{saved ? "Acompanhando" : "Acompanhar"}
         </button>
       </div>
-      <ProposalDetail proposal={proposal} comments={comments} supporters={supporters} user={user} isGef={isGef} onComment={onComment} onLike={onLike} likedCommentIds={likedCommentIds} onSubmitGefResponse={onSubmitGefResponse} />
+      <ProposalDetail proposal={proposal} comments={comments} user={user} isGef={isGef} onComment={onComment} onLike={onLike} likedCommentIds={likedCommentIds} onSubmitGefResponse={onSubmitGefResponse} />
       {isGef && (
         <div className="context-proposal-actions">
           <span><Icon name="spark" size={15} /> Ações do GEF</span>
@@ -1246,7 +1210,6 @@ function AuthView({ onLogin, onSignup }: { onLogin: (name: string, password: str
           <span>Estudantes podem criar uma conta. O acesso administrativo do GEF é gerenciado com credenciais seguras pela equipe responsável.</span>
         </div>
       </div>
-      <p className="auth-demo-note">Plataforma 100% funcional com persistência e backend ativo</p>
     </main>
   );
 }
@@ -1935,7 +1898,6 @@ export function GEFShell() {
                       <ProposalDetail
                         proposal={proposal}
                         comments={state.comments}
-                        supporters={state.supporters[proposal.id] ?? []}
                         user={user}
                         isGef={isGef}
                         onComment={addComment}
@@ -1994,7 +1956,6 @@ export function GEFShell() {
                         <ProposalDetail
                           proposal={proposal}
                           comments={state.comments}
-                          supporters={state.supporters[proposal.id] ?? []}
                           user={user}
                           isGef={isGef}
                           onComment={addComment}
@@ -2108,7 +2069,6 @@ export function GEFShell() {
                 <ProposalPreview
                   proposal={agendaProposal}
                   comments={state.comments}
-                  supporters={state.supporters[agendaProposal.id] ?? []}
                   user={user}
                   isGef={isGef}
                   supported={userSupportedIds.includes(agendaProposal.id)}
@@ -2258,7 +2218,6 @@ export function GEFShell() {
                 <ProposalPreview
                   proposal={gefProposal}
                   comments={state.comments}
-                  supporters={state.supporters[gefProposal.id] ?? []}
                   user={user}
                   isGef
                   supported={userSupportedIds.includes(gefProposal.id)}

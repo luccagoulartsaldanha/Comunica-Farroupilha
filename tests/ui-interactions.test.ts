@@ -86,6 +86,24 @@ test("comments detail keeps the conversation focused without the explanatory ban
   assert.doesNotMatch(shellSource, /ÚLTIMO RETORNO DO GEF/);
 });
 
+test("proposal detail does not expose the public supporter roster", () => {
+  assert.doesNotMatch(shellSource, /function SupportersPanel/);
+  assert.doesNotMatch(shellSource, /className="supporters-card"/);
+  assert.doesNotMatch(stylesSource, /\.supporters-card\{/);
+});
+
+test("proposal detail does not leave an empty side rail for students", () => {
+  assert.match(shellSource, /\{isGef && onSubmitGefResponse && \(\s*<div className="detail-side">/s);
+  assert.doesNotMatch(shellSource, /<div className="detail-side">\s*\{isGef && onSubmitGefResponse && \(/s);
+});
+
+test("login omits the backend status marketing note", () => {
+  assert.doesNotMatch(shellSource, /className="auth-demo-note"/);
+  assert.doesNotMatch(shellSource, /Plataforma 100% funcional com persistência e backend ativo/);
+  assert.doesNotMatch(stylesSource, /\.auth-demo-note\{/);
+  assert.match(shellSource, /className="auth-note"/);
+});
+
 test("top-right profile menu is anchored to its trigger", () => {
   assert.match(shellSource, /profileOpen === "topbar"/);
   assert.match(shellSource, /className="topbar-profile-wrap"/);
