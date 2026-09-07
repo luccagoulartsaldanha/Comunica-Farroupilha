@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { QueryResultRow } from "@neondatabase/serverless";
 import { query, transaction, type TransactionQuery } from "./db.ts";
 import {
@@ -18,6 +18,7 @@ import {
   type SupporterRecord,
   type UserRole,
 } from "./platform-types.ts";
+import type { LegacyImportPayload } from "./legacy-import.ts";
 
 type ProposalRow = QueryResultRow & {
   id: string; title: string; body: string; author_id: string | null; author_name: string; anonymous: boolean;
@@ -477,4 +478,94 @@ export async function markAllNotificationsRead(userId: string) {
      SELECT id, $1 FROM notifications ON CONFLICT DO NOTHING`,
     [userId],
   );
+}
+
+type ImportCounts = { proposals: number; comments: number; activities: number; chapaQuestions: number };
+
+function stableUuid(value: string) {
+  const bytes = createHash("sha256").update(value).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export async function importLegacyData(importedBy: string, payload: LegacyImportPayload) {
+  const migrationKey = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  return transaction(async (tx) => {
+    const claimed = await tx<{ migration_key: string }>(
+      `INSERT INTO legacy_imports (migration_key, imported_by) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING RETURNING migration_key`,
+      [migrationKey, importedBy],
+    );
+    if (!claimed[0]) {
+      return { migrationKey, alreadyImported: true, imported: { proposals: 0, comments: 0, activities: 0, chapaQuestions: 0 } satisfies ImportCounts };
+    }
+
+    const counts: ImportCounts = { proposals: 0, comments: 0, activities: 0, chapaQuestions: 0 };
+    const proposalIds = new Map<string, string>();
+    for (const proposal of payload.proposals) {
+      const id = stableUuid(`legacy:proposal:${proposal.id}:${proposal.title}:${proposal.body}`);
+      proposalIds.set(proposal.id, id);
+      const rows = await tx<{ id: string }>(
+        `INSERT INTO proposals
+          (id, title, body, author_name, anonymous, theme, status, origin, gef_response, gef_response_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $9::text IS NULL THEN NULL ELSE now() END)
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [id, proposal.title, proposal.body, proposal.author, proposal.anonymous, proposal.theme, proposal.status, proposal.origin, proposal.gefResponse ?? null],
+      );
+      if (rows[0]) counts.proposals += 1;
+      await tx(
+        "INSERT INTO legacy_entities (fingerprint, migration_key, entity_type, entity_id) VALUES ($1, $2, 'proposal', $3) ON CONFLICT DO NOTHING",
+        [createHash("sha256").update(`proposal:${proposal.id}`).digest("hex"), migrationKey, id],
+      );
+    }
+
+    const commentIds = new Map<string, string>();
+    for (const comment of payload.comments) {
+      const proposalId = proposalIds.get(comment.proposalId);
+      if (!proposalId) continue;
+      const id = stableUuid(`legacy:comment:${comment.id}:${comment.body}`);
+      commentIds.set(comment.id, id);
+      const rows = await tx<{ id: string }>(
+        `INSERT INTO comments (id, proposal_id, author_name, author_role, anonymous, body)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING id`,
+        [id, proposalId, comment.author, comment.role, comment.anonymous, comment.body],
+      );
+      if (rows[0]) counts.comments += 1;
+    }
+    for (const comment of payload.comments) {
+      if (!comment.parentId) continue;
+      const id = commentIds.get(comment.id);
+      const parentId = commentIds.get(comment.parentId);
+      if (id && parentId) await tx("UPDATE comments SET parent_id = $2 WHERE id = $1", [id, parentId]);
+    }
+
+    for (const activity of payload.activities) {
+      const proposalId = proposalIds.get(activity.proposalId);
+      if (!proposalId) continue;
+      const id = stableUuid(`legacy:activity:${activity.id}:${activity.title}`);
+      const rows = await tx<{ id: string }>(
+        `INSERT INTO activities (id, proposal_id, title, activity_date, time_label, place, audience, status)
+         VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8) ON CONFLICT DO NOTHING RETURNING id`,
+        [id, proposalId, activity.title, activity.date, activity.time, activity.place, activity.audience, activity.status],
+      );
+      if (rows[0]) counts.activities += 1;
+    }
+
+    for (const question of payload.chapaQuestions) {
+      const id = stableUuid(`legacy:question:${question.id}:${question.question}`);
+      const rows = await tx<{ id: string }>(
+        `INSERT INTO chapa_questions
+          (id, chapa_id, proposal_area, proposal_title, question, author_name, class_name, answer, answered_by, answered_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END)
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [id, question.chapaId, question.proposalArea, question.proposalTitle ?? null, question.question, question.author, question.turma, question.answer ?? null, question.answeredBy ?? null],
+      );
+      if (rows[0]) counts.chapaQuestions += 1;
+    }
+
+    await tx("UPDATE legacy_imports SET result = $2::jsonb WHERE migration_key = $1", [migrationKey, JSON.stringify(counts)]);
+    return { migrationKey, alreadyImported: false, imported: counts };
+  });
 }

@@ -14,6 +14,7 @@ import {
   serializeUiPreferences,
   type LoadStatus,
 } from "@/lib/client-platform-state";
+import { previewLegacyState, sanitizeLegacyImport } from "@/lib/legacy-import";
 
 type Role = "student" | "gef";
 type View = "proposals" | "saved" | "agenda" | "chapas" | "notifications" | "gef";
@@ -1253,6 +1254,18 @@ function getInitialUiPreferences() {
   return parseUiPreferences(window.localStorage.getItem("comunica-farroupilha-ui"));
 }
 
+function getLegacyBrowserState() {
+  if (typeof window === "undefined") return null;
+  for (const key of ["comunica-farroupilha-demo", "gremio-comunica-demo"]) {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) continue;
+    try {
+      return { key, data: JSON.parse(raw) as unknown };
+    } catch {}
+  }
+  return null;
+}
+
 export function GEFShell() {
   const [initialPreferences] = useState(getInitialUiPreferences);
   const [state, setState] = useState<DemoState>(defaultState);
@@ -1278,6 +1291,8 @@ export function GEFShell() {
   const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
   const [loadError, setLoadError] = useState("");
   const [interactionError, setInteractionError] = useState("");
+  const [legacyState, setLegacyState] = useState(getLegacyBrowserState);
+  const [legacyImportStatus, setLegacyImportStatus] = useState<"idle" | "importing" | "success">("idle");
   const [evaluatingActivity, setEvaluatingActivity] = useState<Activity | null>(null);
   const [summaryActivity, setSummaryActivity] = useState<Activity | null>(null);
 
@@ -1366,6 +1381,7 @@ export function GEFShell() {
   const agendaActivities = useMemo(() => state.activities.filter((activity) => activity.date.slice(0, 7) === agendaMonthKey), [state.activities, agendaMonthKey]);
   const agendaProposal = agendaProposalId ? state.proposals.find((proposal) => proposal.id === agendaProposalId) : undefined;
   const gefProposal = gefProposalId ? state.proposals.find((proposal) => proposal.id === gefProposalId) : undefined;
+  const legacyPreview = useMemo(() => legacyState ? previewLegacyState(legacyState.data) : null, [legacyState]);
 
   async function login(name: string, password: string): Promise<string | null> {
     try {
@@ -1711,6 +1727,34 @@ export function GEFShell() {
       setState((curr) => ({ ...curr, notifications: previous }));
       setInteractionError(error instanceof Error ? error.message : "Não foi possível atualizar as notificações.");
     }
+  }
+
+  async function importLegacyData() {
+    if (!legacyState || !user || user.role !== "gef") return;
+    setLegacyImportStatus("importing");
+    setInteractionError("");
+    try {
+      const response = await fetch("/api/admin/legacy-import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(sanitizeLegacyImport(legacyState.data)),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Não foi possível importar os dados antigos.");
+      window.localStorage.setItem("comunica-farroupilha-legacy-imported", body.data?.migrationKey ?? "done");
+      setLegacyImportStatus("success");
+      await refreshPlatform();
+      setView("gef");
+    } catch (error) {
+      setLegacyImportStatus("idle");
+      setInteractionError(error instanceof Error ? error.message : "Não foi possível importar os dados antigos.");
+    }
+  }
+
+  function clearLegacyData() {
+    window.localStorage.removeItem("comunica-farroupilha-demo");
+    window.localStorage.removeItem("gremio-comunica-demo");
+    setLegacyState(null);
   }
 
   function resetDemo() {
@@ -2151,6 +2195,25 @@ export function GEFShell() {
                   <Icon name="plus" size={17} />Nova atividade
                 </button>
               </div>
+
+              {legacyPreview && Object.values(legacyPreview).some((count) => count > 0) && (
+                <aside className="legacy-import-panel" aria-live="polite">
+                  <span className="legacy-import-icon"><Icon name={legacyImportStatus === "success" ? "check" : "refresh"} size={20} /></span>
+                  <div>
+                    <h3>{legacyImportStatus === "success" ? "Dados antigos importados" : "Dados antigos encontrados neste navegador"}</h3>
+                    <p>
+                      {legacyPreview.proposals} propostas, {legacyPreview.comments} comentários, {legacyPreview.activities} atividades e {legacyPreview.chapaQuestions} dúvidas podem ser preservados no banco.
+                    </p>
+                  </div>
+                  {legacyImportStatus === "success" ? (
+                    <button type="button" className="outline-button tactile-control" onClick={clearLegacyData}>Apagar cópia antiga</button>
+                  ) : (
+                    <button type="button" className="primary-button tactile-control" disabled={legacyImportStatus === "importing"} onClick={importLegacyData}>
+                      {legacyImportStatus === "importing" ? "Importando…" : "Importar dados antigos"}
+                    </button>
+                  )}
+                </aside>
+              )}
 
               {activityOpen && <ActivityComposer proposals={state.proposals} onCancel={() => setActivityOpen(false)} onCreate={createActivity} />}
 
