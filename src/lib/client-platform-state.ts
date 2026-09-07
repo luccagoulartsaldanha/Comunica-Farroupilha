@@ -33,8 +33,8 @@ export async function loadPlatform(signal: AbortSignal, fetcher: FetchLike = fet
   return { user, snapshot: platformBody.data as PlatformSnapshot };
 }
 
-export function beginInteraction(revisions: Map<string, number>, key: string) {
-  const revision = (revisions.get(key) ?? 0) + 1;
+export function beginInteraction(revisions: Map<string, number>, key: string, now = Date.now()) {
+  const revision = Math.max(now, (revisions.get(key) ?? 0) + 1);
   revisions.set(key, revision);
   return revision;
 }

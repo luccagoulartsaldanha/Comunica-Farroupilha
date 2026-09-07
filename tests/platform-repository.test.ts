@@ -163,3 +163,67 @@ test("repository persists explicit interaction intent across concurrent requests
   assert.deepEqual(otherSnapshot.savedByUser[otherUserId], []);
   assert.deepEqual(otherSnapshot.likedCommentsByUser[otherUserId], []);
 });
+
+test("repository masks anonymous authors and rejects stale interaction revisions", async () => {
+  const repository = await import("../src/lib/platform-repository.ts");
+  const authorId = randomUUID();
+  const studentViewerId = randomUUID();
+  const gefViewerId = randomUUID();
+  const marker = randomUUID();
+  const ids = [authorId, studentViewerId, gefViewerId];
+  let proposalId = "";
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, username_normalized, class_name, role, password_hash)
+       VALUES ($1, $2, $3, '2º EM', 'student', 'test-hash'),
+              ($4, $5, $6, '1º EM', 'student', 'test-hash'),
+              ($7, $8, $9, 'GEF', 'gef', 'test-hash')`,
+      [authorId, `Autor ${marker}`, `autor-${marker}`, studentViewerId, `Leitor ${marker}`, `leitor-${marker}`, gefViewerId, `GEF ${marker}`, `gef-${marker}`],
+    );
+    const proposal = await repository.createProposal({
+      title: `[privacy-${marker}] Proposta anônima`,
+      body: "Conteúdo suficiente para verificar a privacidade de autoria na resposta pública.",
+      author: `Autor ${marker}`,
+      authorId,
+      anonymous: true,
+      theme: "Convivência",
+      origin: "student",
+    });
+    proposalId = proposal.id;
+    const comment = await repository.addComment(proposal.id, {
+      author: `Autor ${marker}`,
+      authorId,
+      role: "student",
+      anonymous: true,
+      body: "Comentário anônimo para teste de privacidade.",
+    });
+    assert.ok(comment);
+
+    const studentSnapshot = await repository.getPlatformSnapshot(studentViewerId);
+    const publicProposal = studentSnapshot.proposals.find((item) => item.id === proposal.id)!;
+    const publicComment = studentSnapshot.comments.find((item) => item.id === comment.id)!;
+    assert.equal(publicProposal.author, "");
+    assert.equal(publicProposal.authorId, "");
+    assert.equal(publicComment.author, "");
+    assert.equal(publicComment.authorId, "");
+
+    const gefSnapshot = await repository.getPlatformSnapshot(gefViewerId);
+    assert.equal(gefSnapshot.proposals.find((item) => item.id === proposal.id)?.author, `Autor ${marker}`);
+
+    await repository.setSupport(proposal.id, studentViewerId, true, 200);
+    await repository.setSupport(proposal.id, studentViewerId, false, 199);
+    await repository.setSaved(proposal.id, studentViewerId, true, 200);
+    await repository.setSaved(proposal.id, studentViewerId, false, 199);
+    await repository.setCommentLike(comment.id, studentViewerId, true, 200);
+    await repository.setCommentLike(comment.id, studentViewerId, false, 199);
+
+    const finalSnapshot = await repository.getPlatformSnapshot(studentViewerId);
+    assert.deepEqual(finalSnapshot.supportedByUser[studentViewerId], [proposal.id]);
+    assert.deepEqual(finalSnapshot.savedByUser[studentViewerId], [proposal.id]);
+    assert.deepEqual(finalSnapshot.likedCommentsByUser[studentViewerId], [comment.id]);
+  } finally {
+    if (proposalId) await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    await pool.query("DELETE FROM notifications WHERE body LIKE $1", [`%${marker}%`]);
+    await pool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [ids]);
+  }
+});

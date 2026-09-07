@@ -121,6 +121,7 @@ test("GEF interface previews legacy data and imports only after an explicit acti
   assert.match(source, /comunica-farroupilha-demo/);
   assert.match(source, /gremio-comunica-demo/);
   assert.match(source, /previewLegacyState/);
+  assert.match(source, /localStorage\.getItem\("comunica-farroupilha-legacy-imported"\)/);
   assert.match(source, /Importar dados antigos/);
   assert.match(source, /onClick=\{importLegacyData\}/);
 });

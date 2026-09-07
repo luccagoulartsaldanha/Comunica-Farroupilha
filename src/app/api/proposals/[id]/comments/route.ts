@@ -8,8 +8,9 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
-    if (!(await getProposal(id))) return errorResponse("Proposta não encontrada.", 404);
-    return dataResponse(await getComments(id));
+    const viewer = await getSessionUser();
+    if (!(await getProposal(id, viewer?.role === "gef"))) return errorResponse("Proposta não encontrada.", 404);
+    return dataResponse(await getComments(id, viewer?.role === "gef"));
   } catch (error) {
     return unavailableResponse("list-comments", error);
   }

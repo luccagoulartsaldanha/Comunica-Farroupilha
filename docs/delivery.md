@@ -32,7 +32,7 @@ O navegador não persiste mais o estado do domínio. Uma falha de banco é exibi
 - isolamento confirmado: a segunda conta vê a proposta, mas não herda apoio nem acompanhamento;
 - health check local retornou banco conectado; logs do servidor registraram respostas 200/201 sem exceções;
 - auditoria Vercel confirmou Neon disponível e variáveis de banco nos ambientes production, preview e development;
-- dados descartáveis criados pela verificação foram removidos; o banco ficou somente com a conta GEF.
+- dados descartáveis criados pela verificação foram removidos; dados de uso posteriores, encontrados no banco compartilhado, foram preservados.
 
 ## Continuidade operacional
 

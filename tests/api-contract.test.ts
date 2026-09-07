@@ -36,7 +36,8 @@ test("support, save, and comment-like routes require explicit boolean intent", (
   for (const [file, field, operation] of cases) {
     const source = readFileSync(file, "utf8");
     assert.match(source, new RegExp(`typeof body\\.${field} !== ["']boolean["']`));
-    assert.match(source, new RegExp(`await ${operation}\\(id, user\\.id, body\\.${field}\\)`));
+    assert.match(source, /typeof body\.revision !== ["']number["']/);
+    assert.match(source, new RegExp(`await ${operation}\\(id, user\\.id, body\\.${field}, body\\.revision\\)`));
     assert.doesNotMatch(source, /toggleSupport|toggleSaved|toggleCommentLike/);
   }
 });
@@ -50,4 +51,10 @@ test("platform and health routes expose dynamic database state without caching",
   assert.match(health, /await checkDatabaseConnection\(\)/);
   assert.match(http, /["']Cache-Control["']\s*:\s*["']no-store, max-age=0/);
   assert.match(http, /Vary\s*:\s*["']Cookie/);
+});
+
+test("session lookup responses are private and never cached", () => {
+  const authMe = readFileSync("src/app/api/auth/me/route.ts", "utf8");
+  assert.match(authMe, /Cache-Control["']\s*:\s*["']no-store, max-age=0/);
+  assert.match(authMe, /Vary\s*:\s*["']Cookie/);
 });

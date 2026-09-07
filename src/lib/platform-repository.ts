@@ -69,13 +69,13 @@ function dateOnly(value: Date | string) {
   return value.toISOString().slice(0, 10);
 }
 
-function mapProposal(row: ProposalRow): ProposalRecord {
+function mapProposal(row: ProposalRow, revealAnonymousIdentity = false): ProposalRecord {
   return {
     id: row.id,
     title: row.title,
     body: row.body,
-    author: row.author_name,
-    authorId: row.author_id ?? "",
+    author: row.anonymous && !revealAnonymousIdentity ? "" : row.author_name,
+    authorId: row.anonymous && !revealAnonymousIdentity ? "" : row.author_id ?? "",
     anonymous: row.anonymous,
     theme: row.theme,
     status: row.status,
@@ -89,12 +89,12 @@ function mapProposal(row: ProposalRow): ProposalRecord {
   };
 }
 
-function mapComment(row: CommentRow): CommentRecord {
+function mapComment(row: CommentRow, revealAnonymousIdentity = false): CommentRecord {
   return {
     id: row.id,
     proposalId: row.proposal_id,
-    author: row.author_name,
-    authorId: row.author_id ?? "",
+    author: row.anonymous && !revealAnonymousIdentity ? "" : row.author_name,
+    authorId: row.anonymous && !revealAnonymousIdentity ? "" : row.author_id ?? "",
     role: row.author_role,
     anonymous: row.anonymous,
     body: row.body,
@@ -132,7 +132,8 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
     ? `WHERE f.user_id = $1 OR EXISTS (SELECT 1 FROM users viewer WHERE viewer.id = $1 AND viewer.role = 'gef')`
     : "WHERE false";
   const params = userId ? [userId] : [];
-  const [proposalRows, commentRows, activityRows, notificationRows, supporterRows, feedbackRows, questionRows, supported, saved, likedRows] = await Promise.all([
+  const [viewerRows, proposalRows, commentRows, activityRows, notificationRows, supporterRows, feedbackRows, questionRows, supported, saved, likedRows] = await Promise.all([
+    userId ? query<{ role: UserRole }>("SELECT role FROM users WHERE id = $1", [userId]) : Promise.resolve([]),
     query<ProposalRow>(`${proposalSelect} ORDER BY p.created_at DESC`),
     query<CommentRow>(`SELECT c.*, (SELECT count(*)::int FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes FROM comments c ORDER BY c.created_at`),
     query<ActivityRow>("SELECT id, proposal_id, title, activity_date, time_label, place, audience, status FROM activities ORDER BY activity_date"),
@@ -149,6 +150,7 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
     userId ? query<{ comment_id: string }>("SELECT comment_id FROM comment_likes WHERE user_id = $1 ORDER BY created_at", [userId]) : Promise.resolve([]),
   ]);
 
+  const revealAnonymousIdentity = viewerRows[0]?.role === "gef";
   const supportersByProposal: Record<string, SupporterRecord[]> = {};
   for (const row of supporterRows) {
     (supportersByProposal[row.proposal_id] ??= []).push({ id: row.id, name: row.username, turma: row.class_name });
@@ -170,8 +172,8 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
   }));
 
   return {
-    proposals: proposalRows.map(mapProposal),
-    comments: commentRows.map(mapComment),
+    proposals: proposalRows.map((row) => mapProposal(row, revealAnonymousIdentity)),
+    comments: commentRows.map((row) => mapComment(row, revealAnonymousIdentity)),
     activities: activityRows.map(mapActivity),
     notifications,
     supportersByProposal,
@@ -201,9 +203,9 @@ export async function createProposal(input: {
   return (await getProposal(id))!;
 }
 
-export async function getProposal(id: string) {
+export async function getProposal(id: string, revealAnonymousIdentity = false) {
   const rows = await query<ProposalRow>(`${proposalSelect} WHERE p.id = $1`, [id]);
-  return rows[0] ? mapProposal(rows[0]) : undefined;
+  return rows[0] ? mapProposal(rows[0], revealAnonymousIdentity) : undefined;
 }
 
 export async function getProposalSupporters(proposalId: string) {
@@ -252,25 +254,65 @@ async function setRelationIntent(
   }
 }
 
-export async function setSupport(proposalId: string, userId: string, supported: boolean) {
+async function acceptInteractionRevision(
+  tx: TransactionQuery,
+  action: "support" | "save" | "comment_like",
+  resourceId: string,
+  userId: string,
+  revision?: number,
+) {
+  if (revision === undefined) return true;
+  const rows = await tx<{ revision: number }>(
+    `INSERT INTO interaction_revisions (user_id, action, resource_id, revision)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, action, resource_id) DO UPDATE
+       SET revision = EXCLUDED.revision, updated_at = now()
+       WHERE interaction_revisions.revision < EXCLUDED.revision
+     RETURNING revision`,
+    [userId, action, resourceId, revision],
+  );
+  return Boolean(rows[0]);
+}
+
+export async function setSupport(proposalId: string, userId: string, supported: boolean, revision?: number) {
   return transaction(async (tx) => {
-    await setRelationIntent(tx, "proposal_supports", proposalId, userId, supported);
+    if (await acceptInteractionRevision(tx, "support", proposalId, userId, revision)) {
+      await setRelationIntent(tx, "proposal_supports", proposalId, userId, supported);
+    }
     const rows = await tx<{ supports: number | string }>("SELECT count(*)::int AS supports FROM proposal_supports WHERE proposal_id = $1", [proposalId]);
-    return { supported, supports: Number(rows[0]?.supports ?? 0) };
+    const current = await tx<{ supported: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM proposal_supports WHERE proposal_id = $1 AND user_id = $2) AS supported",
+      [proposalId, userId],
+    );
+    return { supported: Boolean(current[0]?.supported), supports: Number(rows[0]?.supports ?? 0) };
   });
 }
 
-export async function setSaved(proposalId: string, userId: string, saved: boolean) {
-  await transaction((tx) => setRelationIntent(tx, "proposal_saves", proposalId, userId, saved));
-  return { saved };
+export async function setSaved(proposalId: string, userId: string, saved: boolean, revision?: number) {
+  return transaction(async (tx) => {
+    if (await acceptInteractionRevision(tx, "save", proposalId, userId, revision)) {
+      await setRelationIntent(tx, "proposal_saves", proposalId, userId, saved);
+    }
+    const current = await tx<{ saved: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM proposal_saves WHERE proposal_id = $1 AND user_id = $2) AS saved",
+      [proposalId, userId],
+    );
+    return { saved: Boolean(current[0]?.saved) };
+  });
 }
 
-export async function setCommentLike(commentId: string, userId: string, liked: boolean) {
+export async function setCommentLike(commentId: string, userId: string, liked: boolean, revision?: number) {
   return transaction(async (tx) => {
-    if (liked) await tx("INSERT INTO comment_likes (comment_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [commentId, userId]);
-    else await tx("DELETE FROM comment_likes WHERE comment_id = $1 AND user_id = $2", [commentId, userId]);
+    if (await acceptInteractionRevision(tx, "comment_like", commentId, userId, revision)) {
+      if (liked) await tx("INSERT INTO comment_likes (comment_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [commentId, userId]);
+      else await tx("DELETE FROM comment_likes WHERE comment_id = $1 AND user_id = $2", [commentId, userId]);
+    }
     const rows = await tx<{ likes: number | string }>("SELECT count(*)::int AS likes FROM comment_likes WHERE comment_id = $1", [commentId]);
-    return { liked, likes: Number(rows[0]?.likes ?? 0) };
+    const current = await tx<{ liked: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM comment_likes WHERE comment_id = $1 AND user_id = $2) AS liked",
+      [commentId, userId],
+    );
+    return { liked: Boolean(current[0]?.liked), likes: Number(rows[0]?.likes ?? 0) };
   });
 }
 
@@ -328,13 +370,13 @@ export async function getActivities() {
   return rows.map(mapActivity);
 }
 
-export async function getComments(proposalId: string) {
+export async function getComments(proposalId: string, revealAnonymousIdentity = false) {
   const rows = await query<CommentRow>(
     `SELECT c.*, (SELECT count(*)::int FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes
      FROM comments c WHERE c.proposal_id = $1 ORDER BY c.created_at`,
     [proposalId],
   );
-  return rows.map(mapComment);
+  return rows.map((row) => mapComment(row, revealAnonymousIdentity));
 }
 
 export async function getComment(commentId: string) {

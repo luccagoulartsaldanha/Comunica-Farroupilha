@@ -1256,6 +1256,7 @@ function getInitialUiPreferences() {
 
 function getLegacyBrowserState() {
   if (typeof window === "undefined") return null;
+  if (window.localStorage.getItem("comunica-farroupilha-legacy-imported")) return null;
   for (const key of ["comunica-farroupilha-demo", "gremio-comunica-demo"]) {
     const raw = window.localStorage.getItem(key);
     if (!raw) continue;
@@ -1448,7 +1449,7 @@ export function GEFShell() {
     setState((curr) => applySupportState(curr, currentUser, id, optimisticSupported, Math.max(0, previousSupports + (optimisticSupported ? 1 : -1))));
 
     try {
-      const res = await fetch(`/api/proposals/${id}/support`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ supported: optimisticSupported }) });
+      const res = await fetch(`/api/proposals/${id}/support`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ supported: optimisticSupported, revision: interactionRevision }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Não foi possível atualizar o apoio.");
       if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
@@ -1474,7 +1475,7 @@ export function GEFShell() {
     setState((curr) => applySavedState(curr, currentUser.id, id, optimisticSaved));
 
     try {
-      const res = await fetch(`/api/proposals/${id}/save`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ saved: optimisticSaved }) });
+      const res = await fetch(`/api/proposals/${id}/save`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ saved: optimisticSaved, revision: interactionRevision }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Não foi possível atualizar o acompanhamento.");
       if (!isLatestInteraction(interactionRevisions.current, interactionKey, interactionRevision)) return;
@@ -1586,7 +1587,7 @@ export function GEFShell() {
       const res = await fetch(`/api/comments/${commentId}/like`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ liked: optimisticLiked }),
+        body: JSON.stringify({ liked: optimisticLiked, revision: interactionRevision }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Não foi possível atualizar a curtida.");

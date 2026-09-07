@@ -10,7 +10,8 @@ const statuses: ProposalStatus[] = ["received", "analysis", "development", "sche
 export async function GET(_request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const proposal = await getProposal(id);
+    const viewer = await getSessionUser();
+    const proposal = await getProposal(id, viewer?.role === "gef");
     if (!proposal) return errorResponse("Proposta não encontrada.", 404);
     return dataResponse({ ...proposal, supporters: await getProposalSupporters(id) });
   } catch (error) {

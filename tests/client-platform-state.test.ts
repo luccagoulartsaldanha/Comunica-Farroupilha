@@ -18,11 +18,11 @@ test("platform loading rejects an unavailable snapshot instead of returning an e
 test("only the newest optimistic interaction response can change state", async () => {
   const stateModule = await import("../src/lib/client-platform-state.ts");
   const revisions = new Map<string, number>();
-  const first = stateModule.beginInteraction(revisions, "support:proposal-1");
-  const second = stateModule.beginInteraction(revisions, "support:proposal-1");
+  const first = stateModule.beginInteraction(revisions, "support:proposal-1", 100);
+  const second = stateModule.beginInteraction(revisions, "support:proposal-1", 100);
 
-  assert.equal(first, 1);
-  assert.equal(second, 2);
+  assert.equal(first, 100);
+  assert.equal(second, 101);
   assert.equal(stateModule.isLatestInteraction(revisions, "support:proposal-1", first), false);
   assert.equal(stateModule.isLatestInteraction(revisions, "support:proposal-1", second), true);
 });

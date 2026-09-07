@@ -75,10 +75,10 @@ test("support and save requests carry an explicit desired state", () => {
   assert.match(shellSource, /const interactionKey = `support:\$\{id\}`;/);
   assert.match(shellSource, /const interactionKey = `save:\$\{id\}`;/);
   assert.match(shellSource, /beginInteraction\(interactionRevisions\.current, interactionKey\)/);
-  assert.match(shellSource, /body: JSON\.stringify\(\{ supported: optimisticSupported \}\)/);
-  assert.match(shellSource, /body: JSON\.stringify\(\{ saved: optimisticSaved \}\)/);
-  assert.match(supportRouteSource, /await setSupport\(id, user\.id, body\.supported\)/);
-  assert.match(saveRouteSource, /await setSaved\(id, user\.id, body\.saved\)/);
+  assert.match(shellSource, /body: JSON\.stringify\(\{ supported: optimisticSupported, revision: interactionRevision \}\)/);
+  assert.match(shellSource, /body: JSON\.stringify\(\{ saved: optimisticSaved, revision: interactionRevision \}\)/);
+  assert.match(supportRouteSource, /await setSupport\(id, user\.id, body\.supported, body\.revision\)/);
+  assert.match(saveRouteSource, /await setSaved\(id, user\.id, body\.saved, body\.revision\)/);
 });
 
 test("comments detail keeps the conversation focused without the explanatory banner", () => {

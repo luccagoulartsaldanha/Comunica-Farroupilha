@@ -12,9 +12,10 @@ export async function POST(request: Request, context: RouteContext) {
     const body = await readJsonObject(request);
     if (!body) return errorResponse("Envie um JSON válido.", 400);
     if (typeof body.liked !== "boolean") return errorResponse("Informe a intenção da curtida.", 400);
+    if (typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 0) return errorResponse("Informe uma revisão de interação válida.", 400);
     const { id } = await context.params;
     if (!(await getComment(id))) return errorResponse("Comentário não encontrado.", 404);
-    return dataResponse(await setCommentLike(id, user.id, body.liked));
+    return dataResponse(await setCommentLike(id, user.id, body.liked, body.revision));
   } catch (error) {
     return unavailableResponse("set-comment-like", error);
   }
