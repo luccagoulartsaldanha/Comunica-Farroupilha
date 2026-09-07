@@ -15,6 +15,7 @@ import {
   type LoadStatus,
 } from "@/lib/client-platform-state";
 import { previewLegacyState, sanitizeLegacyImport } from "@/lib/legacy-import";
+import { ELECTIONS_ENABLED } from "@/lib/feature-flags";
 
 type Role = "student" | "gef";
 type View = "proposals" | "saved" | "agenda" | "chapas" | "notifications" | "gef";
@@ -97,6 +98,7 @@ type Notification = {
   createdAt: string;
   read: boolean;
   activityId?: string;
+  occurrences?: number;
 };
 
 type ChapaProposal = { area: string; title: string; detail: string };
@@ -478,7 +480,7 @@ function ProposalCard({
             <Avatar name={proposal.origin === "gef" ? "GEF" : proposal.anonymous ? "EA" : proposal.author} role={proposal.origin === "gef" ? "gef" : undefined} small />
             <span>
               <strong>{authorLabel(proposal)}</strong>
-              <small>{proposal.anonymous ? "Autoria preservada" : `${proposal.updatedAt} · ${proposal.theme}`}</small>
+              <small>{proposal.anonymous ? `Autoria preservada · Criada ${proposal.createdAt}` : `Criada ${proposal.createdAt} · ${proposal.theme}`}</small>
             </span>
           </span>
           <span className="support-count"><Icon name="users" size={19} /><span><strong>{proposal.supports}</strong><small>Apoios</small></span></span>
@@ -1809,7 +1811,7 @@ export function GEFShell() {
           <button className={view === "proposals" ? "active" : ""} onClick={() => changeView("proposals")}><Icon name="message" size={20} />Propostas</button>
           <button className={view === "saved" ? "active" : ""} onClick={() => changeView("saved")}><Icon name="bookmark" size={20} />Acompanhando</button>
           <button className={view === "agenda" ? "active" : ""} onClick={() => changeView("agenda")}><Icon name="calendar" size={20} />Agenda</button>
-          <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} />Chapas</button>
+          {ELECTIONS_ENABLED && <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} />Chapas</button>}
           <button className={view === "notifications" ? "active" : ""} onClick={() => changeView("notifications")}>
             <Icon name="bell" size={20} />Notificações{unread > 0 && <span className="nav-count">{unread}</span>}
           </button>
@@ -2142,7 +2144,7 @@ export function GEFShell() {
             </section>
           )}
 
-          {view === "chapas" && (
+          {ELECTIONS_ENABLED && view === "chapas" && (
             <ChapasView
               questions={state.chapaQuestions}
               isGef={isGef}
@@ -2173,7 +2175,7 @@ export function GEFShell() {
                   >
                     <span className="notification-icon"><Icon name={notification.activityId ? "calendar" : "message"} size={19} /></span>
                     <span>
-                      <strong>{notification.title}</strong>
+                      <strong>{notification.title}{(notification.occurrences ?? 1) > 1 ? ` · ${notification.occurrences} eventos` : ""}</strong>
                       <small>{notification.body}</small>
                       <em>{notification.createdAt}</em>
                     </span>
@@ -2279,7 +2281,7 @@ export function GEFShell() {
           <button className={view === "proposals" ? "active" : ""} onClick={() => changeView("proposals")}><Icon name="message" size={20} /><span>Propostas</span></button>
           <button className={view === "saved" ? "active" : ""} onClick={() => changeView("saved")}><Icon name="bookmark" size={20} /><span>Acompanhando</span></button>
           <button className={view === "agenda" ? "active" : ""} onClick={() => changeView("agenda")}><Icon name="calendar" size={20} /><span>Agenda</span></button>
-          <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} /><span>Chapas</span></button>
+          {ELECTIONS_ENABLED && <button className={view === "chapas" ? "active" : ""} onClick={() => changeView("chapas")}><Icon name="users" size={20} /><span>Chapas</span></button>}
           <button className={view === "notifications" ? "active" : ""} onClick={() => changeView("notifications")}><Icon name="bell" size={20} /><span>Notificações</span>{unread > 0 && <b>{unread}</b>}</button>
           {isGef && <button className={view === "gef" ? "active" : ""} onClick={() => changeView("gef")}><Icon name="grid" size={20} /><span>GEF</span></button>}
         </nav>

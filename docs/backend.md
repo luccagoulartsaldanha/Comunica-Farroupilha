@@ -4,7 +4,7 @@
 
 O backend usa Neon Postgres como fonte única e compartilhada entre as instâncias serverless da Vercel. Não há store global, arquivos em `/tmp` ou fallback de dados de domínio no `localStorage`.
 
-As tabelas e restrições ficam em `db/migrations/0001_initial.sql`. Contagens de apoios, comentários e avaliações são derivadas das relações. As chaves únicas de apoio, acompanhamento, curtida e avaliação tornam requisições repetidas idempotentes.
+As tabelas e restrições ficam em `db/migrations/0001_initial.sql` e migrations seguintes. Contagens de apoios, comentários e avaliações são derivadas das relações. As chaves únicas de apoio, acompanhamento, curtida e avaliação tornam requisições repetidas idempotentes. `0002_interaction_revisions.sql` registra a revisão mais recente por ação para rejeitar requisições atrasadas.
 
 Variáveis obrigatórias, sempre fora do Git:
 
@@ -31,17 +31,23 @@ O cookie usa `SameSite=Lax`, caminho `/`, duração de sete dias e `Secure` em p
 - `GET/POST /api/activities` e `GET/PATCH /api/activities/:id`.
 - `GET/POST /api/activities/:id/feedback`.
 - `GET/PATCH /api/notifications`.
-- `GET /api/chapas` e `GET/POST/PATCH /api/chapas/questions`.
+- `GET /api/chapas` e `GET/POST/PATCH /api/chapas/questions`: retornam 410 até uma eleição ser configurada; a flag está em `src/lib/feature-flags.ts`.
 - `GET /api/platform`: snapshot público e específico da sessão.
 - `POST /api/admin/legacy-import`: importação GEF idempotente de dados antigos do navegador.
 
-Respostas de domínio usam `{ data }`; falhas usam `{ error }` com status 400, 401, 403, 404, 409 ou 503. Dados dinâmicos usam `Cache-Control: no-store, max-age=0` e respostas específicas da sessão variam por cookie.
+Respostas de domínio usam `{ data }`; falhas usam `{ error }` com status 400, 401, 403, 404, 409, 410 ou 503. Dados dinâmicos usam `Cache-Control: no-store, max-age=0` e respostas específicas da sessão variam por cookie.
 
 ## Concorrência e cliente
 
 Apoio, acompanhamento e curtida recebem a intenção final, não um comando de alternância. O cliente aplica feedback otimista imediatamente, numera cada interação e ignora respostas antigas. A resposta canônica do banco consolida o estado; a falha da revisão atual faz rollback e exibe uma mensagem.
 
 Na inicialização, sessão e snapshot são carregados em conjunto. Uma resposta 503 gera uma tela de erro com nova tentativa; somente um snapshot bem-sucedido e realmente vazio exibe “nenhuma proposta”.
+
+## Timestamps e notificações
+
+O banco armazena todos os instantes em `timestamptz`. A API converte-os para rótulos relativos em um único ponto (`Agora`, `Há N min`, `Há N h` ou data local). O card usa a mesma criação no cabeçalho e na linha de autoria; atualizações não aparecem como se fossem a criação.
+
+`notification-manager.ts` atribui uma chave estável por evento, usa upsert para retries e compacta registros legados com o mesmo título e corpo. O agrupamento mantém o horário mais recente, soma `occurrences` e permanece não lido se qualquer ocorrência ainda estiver não lida.
 
 ## Migração do legado
 

@@ -74,6 +74,7 @@ export type NotificationRecord = {
   createdAt: string;
   read: boolean;
   activityId?: string;
+  occurrences?: number;
 };
 
 export type ChapaProposalRecord = { area: string; title: string; detail: string };

@@ -10,3 +10,5 @@
 | Task 8: Hidratação e Interações sem Corrida | done | Fonte única no servidor, loading/error/retry e revisões para apoio, acompanhamento e curtidas |
 | Task 9: Migração Segura do LocalStorage | done | Importação explícita e idempotente restrita ao GEF, sem contas, senhas ou sessões |
 | Task 10: Validação End-to-End e Auditoria Vercel | done | Browser, API, Neon, cinco recargas, isolamento por usuário e limpeza de fixtures confirmados |
+| Task 11: Timestamps e Gerenciador de Notificações | done | Criação exibida de forma consistente; notificações antigas agrupadas e novos eventos deduplicados |
+| Task 12: Chapas Desabilitadas até Eleição | done | Navegação removida, APIs respondem 410 e flag operacional centralizada |

@@ -16,9 +16,11 @@ O armazenamento efêmero em memória/`/tmp` e a sessão baseada em arquivo foram
 
 O navegador não persiste mais o estado do domínio. Uma falha de banco é exibida como indisponibilidade com retry, nunca como feed vazio. A visão GEF pode importar de forma explícita a cópia legada presente no navegador.
 
+Timestamps são derivados do mesmo instante de criação e notificações repetidas são agrupadas pelo gerenciador com contagem de ocorrências. A área de Chapas e suas APIs retornam 410 enquanto não houver eleição.
+
 ## Banco
 
-- migration inicial: `db/migrations/0001_initial.sql`;
+- migrations: `db/migrations/0001_initial.sql` a `0004_notification_conflict_target.sql`;
 - execução: `pnpm db:migrate`;
 - seed GEF: `pnpm db:seed-admin`;
 - conta GEF criada: `administrador`;

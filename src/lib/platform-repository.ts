@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import type { QueryResultRow } from "@neondatabase/serverless";
 import { query, transaction, type TransactionQuery } from "./db.ts";
+import { collapseNotifications, createNotification, notificationKey, type NotificationRow } from "./notification-manager.ts";
 import {
   CHAPAS,
   type ActivityFeedbackRating,
@@ -37,9 +38,6 @@ type ActivityRow = QueryResultRow & {
 type FeedbackRow = QueryResultRow & {
   id: string; activity_id: string; user_id: string; username: string; class_name: string; participated: boolean;
   reason_not_participated: string | null; rating: ActivityFeedbackRating | null; comment: string | null; created_at: Date | string;
-};
-type NotificationRow = QueryResultRow & {
-  id: string; title: string; body: string; activity_id: string | null; created_at: Date | string; read: boolean;
 };
 type ChapaQuestionRow = QueryResultRow & {
   id: string; chapa_id: string; proposal_area: string; proposal_title: string | null; question: string;
@@ -137,7 +135,7 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
     query<ProposalRow>(`${proposalSelect} ORDER BY p.created_at DESC`),
     query<CommentRow>(`SELECT c.*, (SELECT count(*)::int FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes FROM comments c ORDER BY c.created_at`),
     query<ActivityRow>("SELECT id, proposal_id, title, activity_date, time_label, place, audience, status FROM activities ORDER BY activity_date"),
-    query<NotificationRow>(`SELECT n.id, n.title, n.body, n.activity_id, n.created_at,
+    query<NotificationRow>(`SELECT n.id, n.title, n.body, n.activity_id, n.created_at, n.dedupe_key, n.occurrence_count,
       ${userId ? "EXISTS (SELECT 1 FROM notification_reads nr WHERE nr.notification_id = n.id AND nr.user_id = $1)" : "false"} AS read
       FROM notifications n ORDER BY n.created_at DESC`, params),
     query<QueryResultRow & { proposal_id: string; id: string; username: string; class_name: string; anonymous: boolean }>(
@@ -162,9 +160,9 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
   }
   const activityFeedbacks: Record<string, ActivityFeedbackRecord[]> = {};
   for (const row of feedbackRows) (activityFeedbacks[row.activity_id] ??= []).push(mapFeedback(row));
-  const notifications: NotificationRecord[] = notificationRows.map((row) => ({
-    id: row.id, title: row.title, body: row.body, createdAt: timeLabel(row.created_at) ?? "", read: row.read,
-    ...(row.activity_id ? { activityId: row.activity_id } : {}),
+  const notifications: NotificationRecord[] = collapseNotifications(notificationRows).map((notification) => ({
+    ...notification,
+    createdAt: timeLabel(notification.createdAt) ?? notification.createdAt,
   }));
   const chapaQuestions: ChapaQuestionRecord[] = questionRows.map((row) => ({
     id: row.id, chapaId: row.chapa_id, proposalArea: row.proposal_area, question: row.question,
@@ -201,9 +199,11 @@ export async function createProposal(input: {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [id, input.title, input.body, input.authorId, input.author, input.anonymous, input.theme, input.origin],
     );
-    await tx("INSERT INTO notifications (id, title, body) VALUES ($1, $2, $3)", [
-      randomUUID(), "Nova proposta recebida", `${input.anonymous ? "Uma pessoa estudante" : input.author} publicou uma ideia para o recreio.`,
-    ]);
+    await createNotification(tx, {
+      dedupeKey: notificationKey("proposal", id, "created"),
+      title: "Nova proposta recebida",
+      body: `${input.anonymous ? "Uma pessoa estudante" : input.author} publicou uma ideia para o recreio.`,
+    });
   });
   return (await getProposal(id))!;
 }
@@ -239,9 +239,11 @@ export async function addComment(proposalId: string, input: {
       [id, proposalId, input.authorId, input.author, input.role, input.anonymous, input.body, input.parentId ?? null],
     );
     await tx("UPDATE proposals SET updated_at = now() WHERE id = $1", [proposalId]);
-    await tx("INSERT INTO notifications (id, title, body) VALUES ($1, $2, $3)", [
-      randomUUID(), "Nova interação na comunidade", `${input.anonymous ? "Uma pessoa estudante" : input.author} comentou uma proposta.`,
-    ]);
+    await createNotification(tx, {
+      dedupeKey: notificationKey("comment", id, "created"),
+      title: "Nova interação na comunidade",
+      body: `${input.anonymous ? "Uma pessoa estudante" : input.author} comentou uma proposta.`,
+    });
   });
   const rows = await query<CommentRow>(
     "SELECT c.*, (SELECT count(*)::int FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes FROM comments c WHERE c.id = $1",
@@ -339,11 +341,11 @@ export async function updateProposalStatus(proposalId: string, status: ProposalS
       [proposalId, status, gefResponse ?? null],
     );
     if (!rows[0]) return false;
-    await tx("INSERT INTO notifications (id, title, body) VALUES ($1, $2, $3)", [
-      randomUUID(),
-      "Atualização de proposta",
-      `A proposta "${rows[0].title.slice(0, 30)}..." agora está: ${status}.`,
-    ]);
+    await createNotification(tx, {
+      dedupeKey: notificationKey("proposal", proposalId, `status:${status}:${gefResponse ?? ""}`),
+      title: "Atualização de proposta",
+      body: `A proposta "${rows[0].title.slice(0, 30)}..." agora está: ${status}.`,
+    });
     return true;
   });
   return updated ? getProposal(proposalId) : null;
@@ -357,9 +359,11 @@ export async function updateProposalGefResponse(proposalId: string, gefResponse:
       [proposalId, gefResponse],
     );
     if (!rows[0]) return false;
-    await tx("INSERT INTO notifications (id, title, body) VALUES ($1, $2, $3)", [
-      randomUUID(), "Resposta oficial do GEF", `O GEF respondeu a proposta "${rows[0].title.slice(0, 30)}...".`,
-    ]);
+    await createNotification(tx, {
+      dedupeKey: notificationKey("proposal", proposalId, `response:${createHash("sha256").update(gefResponse).digest("hex")}`),
+      title: "Resposta oficial do GEF",
+      body: `O GEF respondeu a proposta "${rows[0].title.slice(0, 30)}...".`,
+    });
     return true;
   });
   return updated ? getProposal(proposalId) : null;
@@ -400,14 +404,14 @@ export async function getComment(commentId: string) {
 
 export async function getNotifications(userId: string) {
   const rows = await query<NotificationRow>(
-    `SELECT n.id, n.title, n.body, n.activity_id, n.created_at,
+    `SELECT n.id, n.title, n.body, n.activity_id, n.created_at, n.dedupe_key, n.occurrence_count,
        EXISTS (SELECT 1 FROM notification_reads nr WHERE nr.notification_id = n.id AND nr.user_id = $1) AS read
      FROM notifications n ORDER BY n.created_at DESC`,
     [userId],
   );
-  return rows.map((row) => ({
-    id: row.id, title: row.title, body: row.body, createdAt: timeLabel(row.created_at) ?? "", read: row.read,
-    ...(row.activity_id ? { activityId: row.activity_id } : {}),
+  return collapseNotifications(rows).map((notification) => ({
+    ...notification,
+    createdAt: timeLabel(notification.createdAt) ?? notification.createdAt,
   }));
 }
 
@@ -424,9 +428,12 @@ export async function createActivity(input: {
     );
     if (!inserted[0]) return false;
     await tx("UPDATE proposals SET status = 'scheduled', updated_at = now() WHERE id = $1", [input.proposalId]);
-    await tx("INSERT INTO notifications (id, title, body, activity_id) VALUES ($1, $2, $3, $4)", [
-      randomUUID(), "Nova atividade na agenda", `${input.title} foi adicionada à agenda do recreio.`, id,
-    ]);
+    await createNotification(tx, {
+      dedupeKey: notificationKey("activity", id, "created"),
+      title: "Nova atividade na agenda",
+      body: `${input.title} foi adicionada à agenda do recreio.`,
+      activityId: id,
+    });
     return true;
   });
   return created ? getActivity(id) : null;

@@ -52,9 +52,9 @@ pnpm build
 
 ## Produto
 
-A landing pública fica em `/` e a plataforma autenticada em `/app`. Ela inclui propostas, comentários e respostas, apoio, acompanhamento, agenda, avaliações pós-atividade, notificações, catálogo das chapas e visão administrativa do GEF.
+A landing pública fica em `/` e a plataforma autenticada em `/app`. Ela inclui propostas, comentários e respostas, apoio, acompanhamento, agenda, avaliações pós-atividade, notificações e visão administrativa do GEF. A área de Chapas permanece desabilitada até existir uma eleição configurada.
 
-O servidor é a única fonte de verdade. O navegador guarda apenas preferências de interface. Navegadores com dados da versão antiga exibem, somente para o GEF, uma ação explícita e idempotente de importação; contas, senhas e sessões antigas nunca são importadas.
+O servidor é a única fonte de verdade. O navegador guarda apenas preferências de interface. Navegadores com dados da versão antiga exibem, somente para o GEF, uma ação explícita e idempotente de importação; contas, senhas e sessões antigas nunca são importadas. Timestamps de criação são exibidos de forma consistente e notificações equivalentes são agrupadas pelo gerenciador de notificações.
 
 ## Estrutura
 
@@ -63,6 +63,8 @@ O servidor é a única fonte de verdade. O navegador guarda apenas preferências
 - `src/lib/platform-repository.ts`: acesso relacional ao domínio;
 - `src/lib/auth-repository.ts`: contas e sessões persistentes;
 - `src/lib/client-platform-state.ts`: hidratação e interações otimistas;
+- `src/lib/notification-manager.ts`: deduplicação e agrupamento de notificações;
+- `src/lib/feature-flags.ts`: flags operacionais, incluindo eleições desabilitadas;
 - `db/migrations`: esquema versionado;
 - `scripts`: migração e seed administrativo;
 - `docs/backend.md`: contratos, segurança e operação do backend.

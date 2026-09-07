@@ -135,3 +135,9 @@ test("resized application logos preserve their intrinsic aspect ratio", () => {
   assert.match(stylesSource, /\.auth-brand img\{width:98px;height:auto/);
   assert.match(stylesSource, /\.mobile-brand img\{width:73px;height:auto/);
 });
+
+test("proposal metadata uses one creation timestamp consistently", () => {
+  assert.match(shellSource, /Autoria preservada · Criada \$\{proposal\.createdAt\}/);
+  assert.match(shellSource, /Criada \$\{proposal\.createdAt\} · \$\{proposal\.theme\}/);
+  assert.match(shellSource, /ELECTIONS_ENABLED &&/);
+});

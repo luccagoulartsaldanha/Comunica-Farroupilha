@@ -2,10 +2,12 @@ import { dataResponse, errorResponse, readJsonObject, requiredString, unavailabl
 import { answerChapaQuestion, createChapaQuestion, getChapaQuestions } from "@/lib/platform-repository";
 import { CHAPA_AREAS } from "@/lib/platform-types";
 import { getSessionUser } from "@/lib/session";
+import { ELECTIONS_ENABLED } from "@/lib/feature-flags";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  if (!ELECTIONS_ENABLED) return errorResponse("A área de chapas estará disponível quando houver uma eleição.", 410);
   try {
     const url = new URL(request.url);
     return dataResponse(await getChapaQuestions(url.searchParams.get("chapaId") ?? undefined, url.searchParams.get("area") ?? undefined));
@@ -13,6 +15,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!ELECTIONS_ENABLED) return errorResponse("A área de chapas estará disponível quando houver uma eleição.", 410);
   try {
     const user = await getSessionUser();
     if (!user) return errorResponse("Faça login para enviar uma dúvida.", 401);
@@ -31,6 +34,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  if (!ELECTIONS_ENABLED) return errorResponse("A área de chapas estará disponível quando houver uma eleição.", 410);
   try {
     const user = await getSessionUser();
     if (!user) return errorResponse("Faça login para responder dúvidas.", 401);
