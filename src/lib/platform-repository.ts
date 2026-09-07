@@ -140,8 +140,12 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
     query<NotificationRow>(`SELECT n.id, n.title, n.body, n.activity_id, n.created_at,
       ${userId ? "EXISTS (SELECT 1 FROM notification_reads nr WHERE nr.notification_id = n.id AND nr.user_id = $1)" : "false"} AS read
       FROM notifications n ORDER BY n.created_at DESC`, params),
-    query<QueryResultRow & { proposal_id: string; id: string; username: string; class_name: string }>(
-      "SELECT ps.proposal_id, u.id, u.username, u.class_name FROM proposal_supports ps JOIN users u ON u.id = ps.user_id ORDER BY ps.created_at",
+    query<QueryResultRow & { proposal_id: string; id: string; username: string; class_name: string; anonymous: boolean }>(
+      `SELECT ps.proposal_id, u.id, u.username, u.class_name, p.anonymous
+       FROM proposal_supports ps
+       JOIN users u ON u.id = ps.user_id
+       JOIN proposals p ON p.id = ps.proposal_id
+       ORDER BY ps.created_at`,
     ),
     query<FeedbackRow>(`SELECT f.*, u.username, u.class_name FROM activity_feedbacks f JOIN users u ON u.id = f.user_id ${feedbackVisibility} ORDER BY f.created_at`, params),
     query<ChapaQuestionRow>("SELECT * FROM chapa_questions ORDER BY created_at DESC"),
@@ -153,6 +157,7 @@ export async function getPlatformSnapshot(userId?: string): Promise<PlatformSnap
   const revealAnonymousIdentity = viewerRows[0]?.role === "gef";
   const supportersByProposal: Record<string, SupporterRecord[]> = {};
   for (const row of supporterRows) {
+    if (row.anonymous && !revealAnonymousIdentity) continue;
     (supportersByProposal[row.proposal_id] ??= []).push({ id: row.id, name: row.username, turma: row.class_name });
   }
   const activityFeedbacks: Record<string, ActivityFeedbackRecord[]> = {};
@@ -208,11 +213,16 @@ export async function getProposal(id: string, revealAnonymousIdentity = false) {
   return rows[0] ? mapProposal(rows[0], revealAnonymousIdentity) : undefined;
 }
 
-export async function getProposalSupporters(proposalId: string) {
-  const rows = await query<QueryResultRow & { id: string; username: string; class_name: string }>(
-    "SELECT u.id, u.username, u.class_name FROM proposal_supports ps JOIN users u ON u.id = ps.user_id WHERE ps.proposal_id = $1 ORDER BY ps.created_at",
+export async function getProposalSupporters(proposalId: string, revealAnonymousIdentity = false) {
+  const rows = await query<QueryResultRow & { id: string; username: string; class_name: string; anonymous: boolean }>(
+    `SELECT u.id, u.username, u.class_name, p.anonymous
+     FROM proposal_supports ps
+     JOIN users u ON u.id = ps.user_id
+     JOIN proposals p ON p.id = ps.proposal_id
+     WHERE ps.proposal_id = $1 ORDER BY ps.created_at`,
     [proposalId],
   );
+  if (rows[0]?.anonymous && !revealAnonymousIdentity) return [];
   return rows.map((row) => ({ id: row.id, name: row.username, turma: row.class_name }));
 }
 

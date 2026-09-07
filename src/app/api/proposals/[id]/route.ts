@@ -13,7 +13,7 @@ export async function GET(_request: Request, context: RouteContext) {
     const viewer = await getSessionUser();
     const proposal = await getProposal(id, viewer?.role === "gef");
     if (!proposal) return errorResponse("Proposta não encontrada.", 404);
-    return dataResponse({ ...proposal, supporters: await getProposalSupporters(id) });
+    return dataResponse({ ...proposal, supporters: await getProposalSupporters(id, viewer?.role === "gef") });
   } catch (error) {
     return unavailableResponse("get-proposal", error);
   }

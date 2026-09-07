@@ -198,6 +198,7 @@ test("repository masks anonymous authors and rejects stale interaction revisions
       body: "Comentário anônimo para teste de privacidade.",
     });
     assert.ok(comment);
+    await repository.setSupport(proposal.id, authorId, true, 200);
 
     const studentSnapshot = await repository.getPlatformSnapshot(studentViewerId);
     const publicProposal = studentSnapshot.proposals.find((item) => item.id === proposal.id)!;
@@ -206,9 +207,11 @@ test("repository masks anonymous authors and rejects stale interaction revisions
     assert.equal(publicProposal.authorId, "");
     assert.equal(publicComment.author, "");
     assert.equal(publicComment.authorId, "");
+    assert.deepEqual(studentSnapshot.supportersByProposal[proposal.id] ?? [], []);
 
     const gefSnapshot = await repository.getPlatformSnapshot(gefViewerId);
     assert.equal(gefSnapshot.proposals.find((item) => item.id === proposal.id)?.author, `Autor ${marker}`);
+    assert.equal(gefSnapshot.supportersByProposal[proposal.id]?.[0]?.id, authorId);
 
     await repository.setSupport(proposal.id, studentViewerId, true, 200);
     await repository.setSupport(proposal.id, studentViewerId, false, 199);
